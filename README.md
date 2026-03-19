@@ -20,7 +20,7 @@ Single-file Flask + SQLite study log app.
 
 ## Run (local)
 pip install -r requirements.txt
-python app.py
+python soapp.py
 
 ## Repository
 https://studylog1.onrender.com/
