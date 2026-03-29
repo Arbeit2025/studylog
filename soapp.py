@@ -822,7 +822,7 @@ STUDYLOG_PLUS_INDEX_HTML = """
                     </div>
 
                     <div class="section">
-                        <strong>自由メモ</strong>
+                        <strong>メモ</strong>
                         <div class="muted">{{ log["memo"] or "なし" }}</div>
                     </div>
 
