@@ -106,7 +106,7 @@ HTML_TEMPLATE = """
     <h1>studylog</h1>
 
     <div class="card">
-        <h2>学習ログを追加</h2>
+        <h2>学習ログ</h2>
         <form method="post" action="/add">
             <div class="grid-3">
                 <div>
@@ -195,13 +195,13 @@ HTML_TEMPLATE = """
                 </div>
 
                 <div style="margin-top:14px;">
-                    <label>自由メモ</label>
+                    <label>メモ</label>
                     <textarea name="memo"></textarea>
                 </div>
             </div>
 
             <div style="margin-top:16px;">
-                <button type="submit">保存する</button>
+                <button type="submit">保存</button>
             </div>
         </form>
     </div>
@@ -552,7 +552,7 @@ STUDYLOG_PLUS_INDEX_HTML = """
 <html lang="ja">
 <head>
     <meta charset="utf-8">
-    <title>studylog+</title>
+    <title>studylog</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
         body{
@@ -619,7 +619,7 @@ STUDYLOG_PLUS_INDEX_HTML = """
 </head>
 <body>
 <div class="wrap">
-    <h1>studylog+</h1>
+    <h1>studylog</h1>
 
     <div class="card">
         <h2>学習ログを追加</h2>
@@ -631,7 +631,7 @@ STUDYLOG_PLUS_INDEX_HTML = """
                 </div>
                 <div>
                     <label>カテゴリ</label>
-                    <input type="text" name="category" placeholder="例: Python / 卒論 / 英語">
+                    <input type="text" name="category" placeholder="例: 卒論">
                 </div>
                 <div>
                     <label>学習時間（分）</label>
@@ -675,7 +675,7 @@ STUDYLOG_PLUS_INDEX_HTML = """
             <div class="section">
                 <h3>学習前</h3>
                 <label>今日の目標</label>
-                <textarea name="goal" placeholder="例: 先行研究を2本読む / 編集機能を実装する"></textarea>
+                <textarea name="goal" placeholder="例: 本を2冊読む"></textarea>
             </div>
 
             <div class="section">
@@ -711,13 +711,13 @@ STUDYLOG_PLUS_INDEX_HTML = """
                 </div>
 
                 <div style="margin-top:14px;">
-                    <label>自由メモ</label>
+                    <label>メモ</label>
                     <textarea name="memo"></textarea>
                 </div>
             </div>
 
             <div style="margin-top:16px;">
-                <button type="submit">保存する</button>
+                <button type="submit">保存</button>
             </div>
         </form>
     </div>
@@ -851,7 +851,7 @@ STUDYLOG_PLUS_EDIT_HTML = """
 <html lang="ja">
 <head>
     <meta charset="utf-8">
-    <title>studylog+ 編集</title>
+    <title>studylog 編集</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
         body{
@@ -962,13 +962,13 @@ STUDYLOG_PLUS_EDIT_HTML = """
                 </div>
 
                 <div style="margin-top:14px;">
-                    <label>自由メモ</label>
+                    <label>メモ</label>
                     <textarea name="memo">{{ log['memo'] or '' }}</textarea>
                 </div>
             </div>
 
             <div style="margin-top:16px;">
-                <button type="submit">更新する</button>
+                <button type="submit">更新</button>
             </div>
         </form>
 
