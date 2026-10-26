@@ -13,13 +13,13 @@ import time
 import urllib.error
 
 from http_auth_smoke import browser, request, check
-from test_studylog import FormParser
+from test_studylog import FormParser, copy_runtime
 
 
 def run_once(index):
     with tempfile.TemporaryDirectory(prefix='studylog-http-effects-') as directory:
         root = Path(directory)
-        shutil.copy2(Path(__file__).resolve().parents[1] / 'soapp.py', root / 'soapp.py')
+        copy_runtime(root)
         environment = os.environ.copy()
         environment.update(STUDYLOG_PIN='4826', STUDYLOG_SECRET_KEY=secrets.token_hex(32), STUDYLOG_COOKIE_SECURE='0')
         with socket.socket() as sock:

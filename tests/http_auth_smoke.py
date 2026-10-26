@@ -7,6 +7,7 @@ import os
 import secrets
 import shutil
 import socket
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -16,7 +17,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from test_studylog import FormParser
+from test_studylog import FormParser, copy_runtime
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -47,7 +48,7 @@ def check(condition, message):
 def run_once(index):
     with tempfile.TemporaryDirectory(prefix="studylog-http-auth-") as directory:
         root = Path(directory)
-        shutil.copy2(Path(__file__).resolve().parents[1] / "soapp.py", root / "soapp.py")
+        copy_runtime(root)
         environment = os.environ.copy()
         environment.update(STUDYLOG_PIN="4826", STUDYLOG_SECRET_KEY=secrets.token_hex(32),
                            STUDYLOG_COOKIE_SECURE="0")
@@ -116,6 +117,14 @@ def run_once(index):
                 check(request(client, base, "/update/1", form)[0] == 302, "repeated edit failed")
             html = request(client, base, "/")[2]
             check("状態分類・過去ログとの比較" in html and "変化 +2" in html, "analysis or before/after display missing")
+            with client.open(base + "/backup", timeout=5) as response:
+                check(response.code == 200, "backup download failed")
+                check("attachment" in response.headers["Content-Disposition"], "backup is not an attachment")
+                backup = root / "download.sqlite3"
+                backup.write_bytes(response.read())
+            with sqlite3.connect(backup) as copied, sqlite3.connect(root / "studylog.db") as original:
+                check(copied.execute("PRAGMA quick_check").fetchone()[0] == "ok", "backup is corrupt")
+                check(copied.execute("SELECT * FROM logs").fetchall() == original.execute("SELECT * FROM logs").fetchall(), "backup lost saved values")
             check(request(browser(), base, "/delete/1", {})[0] == 303, "anonymous delete accepted")
             check(request(client, base, "/edit/1")[0] == 200, "anonymous delete changed the DB")
             check(request(client, base, "/delete/1", {})[0] == 400, "delete skipped CSRF")

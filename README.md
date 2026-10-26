@@ -8,7 +8,9 @@ studylog は、Flask と SQLite で作られたシンプルな学習ログアプ
 小さくてシンプルな学習ログを目的としています。
 
 
-Single-file Flask + SQLite study log app.
+Flask + SQLite study log app. Phase 0 / v0.9（内部テスト版）。
+
+Phase 0の項目別確認と機能一覧は [docs/phase0.md](docs/phase0.md) を参照してください。
 
 ## Features
 - 学習内容、カテゴリ、目標、予定時間、学習方法の保存
@@ -152,10 +154,44 @@ Single-file Flask + SQLite study log app.
 学習効果の実証や、結果に応じて判定閾値・補正係数を自動学習する機能は含みません。
 
 ## データの保存
-データはアプリと同じディレクトリの `studylog.db` に保存します。
-起動時に `logs` テーブルへ不足する列を追加します。以前の記録は学習完了として
+標準ではアプリと同じディレクトリの `studylog.db` に保存します。
+`STUDYLOG_DB_PATH` で保存先を指定できます。相対指定はアプリの場所を基準に解決します。
+全機能が同じDBの `logs` テーブルを使用します。
+起動時にバージョン付きマイグレーションを実行し、不足する列を追加します。
+既存DBの構造を変更する前には `backups/` にSQLiteのオンラインバックアップを作成します。
+バックアップに失敗した場合は構造を変更せず起動を中止します。以前の記録は学習完了として
 引き継ぎ、存在しない学習前の評価・得点・保存日時は補いません。
-旧 `study_logs` テーブルや別DBからの自動移行は行いません。
+旧 `study_logs` テーブルや別DBからの移行は、元データの確認後に明示的に実行します。
+
+### バックアップと旧データの移行
+
+ロック解除後、一覧の「バックアップ」から現在のDB全体をダウンロードできます。
+WALモードでもコミット済みの内容を取り込みます。ファイルには学習記録が含まれるため、
+公開リポジトリへ追加せず、自分で管理する場所に保管してください。
+
+サーバー上のCLIでも実行できます。
+
+```bash
+flask --app soapp backup-databases
+flask --app soapp import-legacy /absolute/path/to/srl_log.db --table study_logs
+flask --app soapp import-legacy /absolute/path/to/old-studylog.db --table logs
+```
+
+バックアップコマンドは、設定されたDBと、プロジェクト内でSQLiteのヘッダーを持つファイルを
+対象にします。既存の `backups/`、仮想環境、Git内部は探索対象から除きます。
+移行前には移行元・移行先をそれぞれバックアップします。旧テーブルと元DBは削除しません。
+IDの衝突時は既存ログを保持し、移行したログに新しいIDを付けます。
+同じファイル・テーブル・元IDの再移行は重複を作りません。移行済みの元データに変更があれば、
+自動上書きせず全件をロールバックします。ファイルを改名・移動すると別の移行元になるので、
+同じ元ファイルの場所を固定してください。未知の列は元DB・バックアップに保持します。
+
+`study_logs.focus_score` → `logs.concentration`、`understanding_score` → `understanding`、
+`reflection` → `memo` と対応づけます。旧形式にない自信度・学習前データはNULLにします。
+元データの記録値・日時は推測で書き換えません。
+
+DBが再起動や再デプロイ後も残るかは、配置先のストレージに依存します。
+自動バックアップを同じ一時ディスク上に作るだけでは永続化になりません。
+Render等で運用する場合は永続ストレージを確認し、ダウンロードしたバックアップも別に保管してください。
 
 学習状態は `status`（`in_progress` / `completed`）、前評価は
 `before_concentration` / `before_understanding` / `before_confidence`、後評価は
@@ -172,6 +208,7 @@ Single-file Flask + SQLite study log app.
 | `STUDYLOG_PIN` | 半角数字4桁（先頭の0も可） |
 | `STUDYLOG_SECRET_KEY` | セッション署名用のランダムな秘密鍵。32文字以上 |
 | `STUDYLOG_COOKIE_SECURE` | 通常は未設定（HTTPS専用Cookie）。ローカルHTTPで試す場合だけ `0` |
+| `STUDYLOG_DB_PATH` | 任意。使用するSQLiteの保存先（標準はアプリ直下の `studylog.db`） |
 
 Renderでは既存の `studylog1` サービスのEnvironmentへ設定します。環境変数を
 保存した後、その設定を取り込むデプロイを実施してください。PINや秘密鍵を
@@ -190,6 +227,9 @@ SQLiteの専用テーブル `studylog_auth_attempts` で共有するため、Coo
 4桁PINは簡易的なアクセス制限です。個別アカウント・多要素認証・データの暗号化は行いません。
 
 ## Run (local)
+Python 3.12 / 3.13に対応。Renderの起動コマンドは従来どおり `gunicorn soapp:app` です。
+依存バージョンは `requirements.txt` に固定しています。
+
 ```bash
 pip install -r requirements.txt
 python - <<'PY'
@@ -212,6 +252,7 @@ python -m unittest discover -s tests -v
 python tests/http_auth_smoke.py
 python tests/http_plan_smoke.py
 python tests/http_effects_smoke.py
+node tests/theme_runtime.js
 ```
 実アプリを一時ディレクトリへコピーし、FlaskのHTTPルートとSQLiteで検証します。
 普段使っているDBは変更しません。追加・前後保存・繰り返し編集・再起動・
@@ -223,6 +264,26 @@ Cookie属性・改ざん、CSRF、不正なサーバー設定も検証します�
 入力欄への引き継ぎ・保存・再起動後の保持・入力エラー時の保持も確認します。
 継続評価は、採用前後の編集・欠測・0点・小数点・複数回の採用・結果編集・
 元ログの削除・再起動・カテゴリの区別・項目別件数・署名改ざん拒否を確認します。
+Phase 0ではさらに、WALを含むバックアップ、移行の再実行、ID衝突、元データの保持、
+同時起動、失敗時の全件取り消し、DB障害時の安全な応答、長すぎる入力も検証します。
+`.github/workflows/tests.yml` によりpushとプルリクエスト時に自動実行します。
+
+## コード構成
+
+| 場所 | 役割 |
+| --- | --- |
+| `soapp.py` | HTTPルート、認証、保存処理の連携、エラー応答、CLI |
+| `studylog_db.py` | 共通DB接続、バックアップ、マイグレーション、旧データ移行 |
+| `studylog_forms.py` | 入力検証、期間指定、日本時間の日付 |
+| `studylog_analysis.py` | 状態分類、次回計画、補正計画の継続評価 |
+| `templates/` | ログイン、一覧、編集、共通入力フォーム |
+| `static/` | CSS、テーマ切り替え、再表示・削除確認のJavaScript |
+
+HTMLは自動エスケープし、JavaScript・CSSは外部ファイルへ分離しています。
+CSPで同一サイトのスクリプトとスタイルだけを許可し、全POSTをCSRFトークンで確認します。
+DBエラーは内部パス等を画面に含めず503で返し、書き込みはトランザクションで取り消します。
+入力の上限はカテゴリ100文字、メモ10,000文字、その他の文章2,000文字、要求全体256KiBです。
+期間指定は日付形式と開始・終了の順序を検証します。「今日」「今週」「今月」は日本時間で計算します。
 
 ## Repository
 https://studylog1.onrender.com/
