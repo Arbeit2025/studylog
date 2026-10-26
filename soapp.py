@@ -752,6 +752,9 @@ STUDYLOG_PLUS_FORM_HTML = """
 {% if error %}
     <p role="alert" style="color:#991b1b;background:#fef2f2;padding:12px;border-radius:12px;">{{ error }}</p>
 {% endif %}
+{% if plan_notice %}
+    <p role="status" style="background:#eef2ff;padding:12px;border-radius:12px;">{{ plan_notice }} 内容を調整し、「学習前を保存」で新しい記録として保存できます。</p>
+{% endif %}
 <p class="muted">学習前だけでも保存できます。一覧の「学習後を記録」から、同じログに結果を追記できます。</p>
 {% if is_edit %}
     <p>状態：<strong>{{ '学習中' if form_data.get('status') == 'in_progress' else '学習完了' }}</strong></p>
@@ -928,7 +931,7 @@ STUDYLOG_PLUS_INDEX_HTML = """
         <button type="submit" form="studylog-lock" style="width:auto;">ロック</button>
     </div>
 
-    <div class="card">
+    <div class="card" id="studylog-add">
         <h2>学習ログを追加</h2>
 """ + STUDYLOG_PLUS_FORM_HTML + """
     </div>
@@ -1061,8 +1064,27 @@ STUDYLOG_PLUS_INDEX_HTML = """
                                 </div>
                             {% endif %}
                             <p class="muted">同じカテゴリの完了ログだけを、学習日と同日の登録順で比較します。表示の絞り込みは基準に影響しません。学習時間の長短だけでは良否を判定しません。</p>
+                            <strong>個人別の判定基準</strong>
                             <p class="muted">過去との差は記録数に応じて弱め、3件以上で傾向を判定します。テストと自信度の比較は参考換算です。テストの内容・難しさの違いも振り返ってください。</p>
                         </details>
+                    </div>
+
+                    {% set plan = plans[log['id']] %}
+                    <div class="section next-plan" data-log-id="{{ log['id'] }}" data-plan-version="{{ plan['version'] }}">
+                        <h3>次回計画の自動補正</h3>
+                        {% if plan['enabled'] %}
+                            <div><strong>次回の予定時間: {{ plan['minutes'] }}分</strong>（基準 {{ plan['base_minutes'] }}分）</div>
+                            <div class="muted">目標: {{ plan['goal'] }}</div>
+                            <div class="muted">学習方法: {{ plan['strategy'] }}</div>
+                            <details style="margin-top:10px;">
+                                <summary>補正の理由</summary>
+                                <p class="muted">{{ plan['reason'] }}</p>
+                                <p class="muted">元の記録は保持し、表示時に再計算します。次の学習へ引き継いで保存した内容は、新しいログに残ります。</p>
+                            </details>
+                            <a class="btn-link" style="margin-top:10px;" href="/?plan_from={{ log['id'] }}#studylog-add">この計画で次の学習を準備</a>
+                        {% else %}
+                            <p class="muted">{{ plan['reason'] }}</p>
+                        {% endif %}
                     </div>
 
                     <div class="section">
@@ -1526,6 +1548,76 @@ def studylog_analyze_logs(logs):
             history.append(row)
     return results
 
+
+STUDYLOG_PLAN_VERSION = "plan-v1"
+STUDYLOG_PLAN_MAX_MINUTES = 480
+
+
+def studylog_build_next_plan(log, analysis):
+    """本人の過去比較と今回の状態から次回案を作る。元のログには書き込まない。"""
+    log = dict(log)
+    result = {"version": STUDYLOG_PLAN_VERSION, "enabled": False,
+              "reason": "学習後の結果を保存すると、次回の計画を自動で組み立てます。"}
+    if log.get("status") != "completed":
+        return result
+    try:
+        value = log.get("study_date")
+        valid_date = isinstance(value, str) and date.fromisoformat(value).isoformat() == value
+    except ValueError:
+        valid_date = False
+    if not valid_date:
+        result["reason"] = "学習日を正しい日付に直すと、次回計画を作れます。"
+        return result
+    actual = studylog_analysis_number(log, "minutes", 1, 2147483647)
+    if actual is None or analysis["state"] == "insufficient":
+        result["reason"] = "実際の学習時間と学習後の評価を記録すると、次回計画を作れます。"
+        return result
+
+    time_metric = next(metric for metric in analysis["metrics"] if metric["key"] == "minutes")
+    planned = studylog_analysis_number(log, "planned_minutes", 1, 2147483647)
+    if planned is not None:
+        base, basis = planned, "今回の予定時間"
+    elif time_metric["count"] >= STUDYLOG_MIN_HISTORY:
+        base, basis = time_metric["baseline"], f"同じカテゴリの過去{time_metric['count']}件の平均時間"
+    else:
+        base, basis = actual, "今回の実際の学習時間（予定と十分な過去記録がないため）"
+
+    weight = min(analysis["comparable_count"] / STUDYLOG_HISTORY_LIMIT, 1)
+    factor = 1.0
+    state = analysis["state"]
+    if state in ("understanding", "execution"):
+        factor -= 0.1 + 0.15 * weight
+        adjustment = "理解・集中を見直す状態のため、記録の充足度に応じて時間を10〜25%短くします。"
+    elif state == "improving" and analysis["comparable_count"] >= STUDYLOG_MIN_HISTORY and all(
+            metric["current"] is not None and metric["current"] >= 4
+            for metric in analysis["metrics"] if metric["key"] in ("concentration", "understanding", "confidence")):
+        factor += 0.1 * weight
+        adjustment = "過去3件以上と比べて前進し、3評価も4以上のため、時間を最大10%増やします。"
+    else:
+        adjustment = "時間を増減する条件には当てはまらないため、基準の時間を維持します。"
+
+    base_minutes = max(1, int(math.floor(base + 0.5)))
+    minutes = max(1, min(STUDYLOG_PLAN_MAX_MINUTES, int(math.floor(base * factor + 0.5))))
+    goals = {
+        "calibration": "確認問題を1問解き、予想と結果を比べる",
+        "understanding": "つまずいた範囲の例題を1問解き、要点を説明する",
+        "execution": "一つの課題に取り組み、終了時に進んだ範囲を記録する",
+        "confidence": "解ける問題を1問確かめ、できたことを一つ記録する",
+    }
+    own_next_action = (log.get("next_action") or "").strip()
+    goal = own_next_action or goals.get(state) or (log.get("goal") or "").strip() or "一つの課題に取り組み、結果を記録する"
+    strategy = (log.get("strategy") or "").strip() if state in ("stable", "improving") else ""
+    reason = (f"{analysis['label']}。{analysis['reason']} {basis}を基準にします。{adjustment} "
+              f"{analysis['evidence']}。分単位で四捨五入し、1〜{STUDYLOG_PLAN_MAX_MINUTES}分に収めます。"
+              "学習時間の長短だけで成功・失敗は判定しません。")
+    if own_next_action:
+        reason += " 自分で記録した「次回どうするか」を目標に引き継ぎます。"
+    result.update(enabled=True, minutes=minutes, base_minutes=base_minutes,
+                  goal=goal, strategy=strategy or analysis["action"], reason=reason,
+                  category=(log.get("category") or "").strip(), task=log.get("task") or "",
+                  factor=factor, history_ids=list(analysis["history_ids"]))
+    return result
+
 # -----------------------------------------
 # U913: 追加処理本体
 # -----------------------------------------
@@ -1655,22 +1747,43 @@ def studylog_plus_index(form_data=None, error=None):
     all_logs = studylog_plus_get_logs()
     logs = studylog_plus_get_logs(where_sql, params) if where_sql else all_logs
     analyses = studylog_analyze_logs(all_logs)
+    plans = {log["id"]: studylog_build_next_plan(log, analyses[log["id"]]) for log in all_logs}
     summary = studylog_plus_get_summary(where_sql, params)
     categories = studylog_plus_get_categories()
+    plan_notice = None
+    response_status = 200
+    if form_data is None:
+        form_data = {"study_date": date.today().isoformat()}
+        source = request.args.get("plan_from")
+        if source is not None:
+            if not (source.isascii() and source.isdecimal() and len(source) <= 10 and 0 < int(source) <= 2147483647):
+                error, response_status = "引き継ぐログの番号を確認してください。", 400
+            elif int(source) not in plans:
+                error, response_status = "引き継ぐログが見つかりません。", 404
+            elif not plans[int(source)]["enabled"]:
+                error, response_status = plans[int(source)]["reason"], 400
+            else:
+                plan = plans[int(source)]
+                form_data.update(category=plan["category"], task=plan["task"], goal=plan["goal"],
+                                 planned_minutes=plan["minutes"], strategy=plan["strategy"])
+                plan_notice = f"ログ #{int(source)} の補正計画を入力欄へ引き継ぎました。まだ保存していません。"
 
-    return render_template_string(
+    html = render_template_string(
         STUDYLOG_PLUS_INDEX_HTML,
         logs=logs,
         analyses=analyses,
+        plans=plans,
         summary=summary,
         categories=categories,
         filters=filters,
-        form_data=form_data if form_data is not None else {"study_date": date.today().isoformat()},
+        form_data=form_data,
+        plan_notice=plan_notice,
         form_action="/add",
         is_edit=False,
         error=error,
         stumble_options=STUDYLOG_PLUS_STUMBLE_OPTIONS
     )
+    return html if response_status == 200 else (html, response_status)
 
 # -----------------------------------------
 # U917: 新しい追加処理
