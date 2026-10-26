@@ -24,8 +24,14 @@
 # =========================================
 # U101: ライブラリ読み込み
 # =========================================
-from flask import Flask, request, redirect, url_for, render_template_string
+from flask import Flask, request, redirect, url_for, render_template_string, session
+import hashlib
+import hmac
+import math
+import os
+import secrets
 import sqlite3
+import time
 from pathlib import Path
 
 
@@ -33,6 +39,186 @@ from pathlib import Path
 # U102: Flaskアプリ初期化
 # =========================================
 app = Flask(__name__)
+app.config.update(
+    SECRET_KEY=os.environ.get("STUDYLOG_SECRET_KEY"),
+    STUDYLOG_PIN=os.environ.get("STUDYLOG_PIN", ""),
+    SESSION_COOKIE_NAME="studylog_session",
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SECURE=os.environ.get("STUDYLOG_COOKIE_SECURE", "1") != "0",
+    SESSION_COOKIE_SAMESITE="Lax",
+)
+
+
+# 4桁PINは公開ソースに保存せず、サーバーの環境変数から読む。
+STUDYLOG_LOGIN_HTML = """
+<!doctype html>
+<html lang="ja">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ロック解除 · studylog</title>
+    <style>
+        *{box-sizing:border-box;}
+        body{margin:0;padding:24px;min-height:100svh;display:grid;place-items:center;
+            font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Yu Gothic",sans-serif;
+            background:#f6f7fb;color:#222;}
+        main{width:100%;max-width:380px;background:#fff;border-radius:20px;padding:32px 24px;
+            box-shadow:0 8px 24px rgba(0,0,0,.06);}
+        h1{margin:0 0 10px;font-size:28px;}
+        p{font-size:14px;line-height:1.8;color:#555;}
+        label{display:block;font-size:14px;font-weight:700;margin:24px 0 8px;}
+        input,button{width:100%;border-radius:12px;padding:14px;font-size:18px;}
+        input{border:1px solid #d7dbea;text-align:center;letter-spacing:.45em;}
+        input:focus{outline:2px solid #6366f1;outline-offset:2px;}
+        button{margin-top:18px;border:0;background:#222;color:white;font-weight:700;cursor:pointer;}
+        .error{color:#b91c1c;background:#fff1f2;border-radius:10px;padding:12px;}
+    </style>
+</head>
+<body>
+<main>
+    <h1>studylog</h1>
+    <p>4桁の暗証番号を入力して、学習の記録を開きます。</p>
+    {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+    {% if configured %}
+    <form method="post" action="{{ url_for('studylog_login') }}">
+        <input type="hidden" name="csrf_token" value="{{ studylog_csrf_token() }}">
+        <label for="pin">暗証番号（数字4桁）</label>
+        <input id="pin" name="pin" type="password" inputmode="numeric" pattern="[0-9]{4}"
+            minlength="4" maxlength="4" autocomplete="current-password" required autofocus
+            aria-describedby="pin-help" {% if error %}aria-invalid="true"{% endif %}>
+        <p id="pin-help">半角の数字4桁で入力してください。</p>
+        <button type="submit">ロック解除</button>
+    </form>
+    {% endif %}
+</main>
+</body>
+</html>
+"""
+
+
+STUDYLOG_LOCK_HTML = """
+<form id="studylog-lock" method="post" action="{{ url_for('studylog_logout') }}" hidden>
+    <input type="hidden" name="csrf_token" value="{{ studylog_csrf_token() }}">
+</form>
+<script>
+window.addEventListener('pageshow', function(event) {
+    if (event.persisted) window.location.reload();
+});
+</script>
+"""
+
+
+def studylog_valid_pin(value):
+    return isinstance(value, str) and len(value) == 4 and value.isascii() and value.isdigit()
+
+
+def studylog_auth_ready():
+    key = app.secret_key
+    return isinstance(key, str) and len(key) >= 32 and studylog_valid_pin(app.config["STUDYLOG_PIN"])
+
+
+def studylog_auth_version():
+    # PINの変更時には、それまでの解除済みCookieも無効になる。
+    return hmac.new(app.secret_key.encode(), app.config["STUDYLOG_PIN"].encode(), hashlib.sha256).hexdigest()
+
+
+def studylog_is_unlocked():
+    version = session.get("studylog_auth_version")
+    unlocked_at = session.get("studylog_unlocked_at")
+    return (isinstance(version, str) and isinstance(unlocked_at, (int, float))
+            and 0 <= time.time() - unlocked_at < 12 * 60 * 60
+            and hmac.compare_digest(version, studylog_auth_version()))
+
+
+def studylog_csrf_token():
+    if "studylog_csrf" not in session:
+        session["studylog_csrf"] = secrets.token_urlsafe(32)
+    return session["studylog_csrf"]
+
+
+@app.context_processor
+def studylog_auth_context():
+    return {"studylog_csrf_token": studylog_csrf_token}
+
+
+@app.before_request
+def studylog_require_unlock():
+    if not studylog_auth_ready():
+        return render_template_string(STUDYLOG_LOGIN_HTML, configured=False,
+                                      error="暗証番号の設定が完了していません。管理者がサーバー設定を確認してください。"), 503
+    if request.endpoint != "studylog_login" and not studylog_is_unlocked():
+        # favicon等の別リクエストで、入力中のログインフォームのCSRFを消さない。
+        session.pop("studylog_auth_version", None)
+        session.pop("studylog_unlocked_at", None)
+        return redirect(url_for("studylog_login"), code=303)
+    if request.method == "POST":
+        expected = session.get("studylog_csrf")
+        supplied = request.form.get("csrf_token", "")
+        if not isinstance(expected, str) or not hmac.compare_digest(expected.encode(), supplied.encode()):
+            return "画面の有効期限が切れました。画面を再読み込みして、もう一度お試しください。", 400
+
+
+@app.after_request
+def studylog_private_response(response):
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    return response
+
+
+def studylog_try_pin(candidate):
+    # 1人用の軽い制限。Cookieを消しても、別プロセスでも試行回数を共有する。
+    now = time.time()
+    with sqlite3.connect(DB_PATH, timeout=10) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("""CREATE TABLE IF NOT EXISTS studylog_auth_attempts (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            failures INTEGER NOT NULL, last_failure REAL NOT NULL, blocked_until REAL NOT NULL
+        )""")
+        conn.execute("INSERT OR IGNORE INTO studylog_auth_attempts VALUES (1, 0, 0, 0)")
+        failures, last_failure, blocked_until = conn.execute(
+            "SELECT failures, last_failure, blocked_until FROM studylog_auth_attempts WHERE id = 1").fetchone()
+        if blocked_until > now:
+            return False, math.ceil(blocked_until - now)
+        if blocked_until or now - last_failure >= 300:
+            failures = 0
+        accepted = studylog_valid_pin(candidate) and hmac.compare_digest(candidate, app.config["STUDYLOG_PIN"])
+        failures = 0 if accepted else failures + 1
+        blocked_until = now + 30 if failures >= 5 else 0
+        conn.execute("UPDATE studylog_auth_attempts SET failures = ?, last_failure = ?, blocked_until = ? WHERE id = 1",
+                     (failures, now, blocked_until))
+    return accepted, 30 if blocked_until else 0
+
+
+@app.route("/login", methods=["GET", "POST"])
+def studylog_login():
+    if studylog_is_unlocked():
+        return redirect(url_for("index"), code=303)
+    error = None
+    status = 200
+    retry_after = 0
+    if request.method == "POST":
+        accepted, retry_after = studylog_try_pin(request.form.get("pin", ""))
+        if accepted:
+            session.clear()
+            session["studylog_auth_version"] = studylog_auth_version()
+            session["studylog_unlocked_at"] = time.time()
+            session.permanent = False
+            return redirect(url_for("index"), code=303)
+        status = 429 if retry_after else 401
+        error = (f"入力を繰り返し間違えたため、{retry_after}秒ほど待ってからお試しください。"
+                 if retry_after else "暗証番号が違います。数字4桁を確認してください。")
+    response = app.make_response((render_template_string(STUDYLOG_LOGIN_HTML, configured=True, error=error), status))
+    if retry_after:
+        response.headers["Retry-After"] = str(retry_after)
+    return response
+
+
+@app.route("/logout", methods=["POST"])
+def studylog_logout():
+    session.clear()
+    return redirect(url_for("studylog_login"), code=303)
 
 
 # =========================================
@@ -571,6 +757,7 @@ STUDYLOG_PLUS_FORM_HTML = """
     <p>状態：<strong>{{ '学習中' if form_data.get('status') == 'in_progress' else '学習完了' }}</strong></p>
 {% endif %}
 <form method="post" action="{{ form_action }}">
+    <input type="hidden" name="csrf_token" value="{{ studylog_csrf_token() }}">
     <div class="grid-2">
         <div>
             <label for="study_date">学習日</label>
@@ -736,7 +923,10 @@ STUDYLOG_PLUS_INDEX_HTML = """
 </head>
 <body>
 <div class="wrap">
-    <h1>studylog</h1>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:18px;">
+        <h1 style="margin:0;">studylog</h1>
+        <button type="submit" form="studylog-lock" style="width:auto;">ロック</button>
+    </div>
 
     <div class="card">
         <h2>学習ログを追加</h2>
@@ -913,6 +1103,7 @@ STUDYLOG_PLUS_INDEX_HTML = """
                     <div class="actions">
                         <a class="btn-link" href="/edit/{{ log['id'] }}">{{ '学習後を記録' if log['status'] == 'in_progress' else '編集' }}</a>
                         <form method="post" action="/delete/{{ log['id'] }}" onsubmit="return confirm('このログを削除しますか？');">
+                            <input type="hidden" name="csrf_token" value="{{ studylog_csrf_token() }}">
                             <button type="submit" class="danger">削除</button>
                         </form>
                     </div>
@@ -923,6 +1114,7 @@ STUDYLOG_PLUS_INDEX_HTML = """
         {% endif %}
     </div>
 </div>
+""" + STUDYLOG_LOCK_HTML + """
 </body>
 </html>
 """
@@ -968,13 +1160,17 @@ STUDYLOG_PLUS_EDIT_HTML = """
 <body>
 <div class="wrap">
     <div class="card">
-        <h1>ログを編集</h1>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:18px;">
+            <h1 style="margin:0;">ログを編集</h1>
+            <button type="submit" form="studylog-lock" style="width:auto;">ロック</button>
+        </div>
 
 """ + STUDYLOG_PLUS_FORM_HTML + """
 
         <a class="back" href="/">← 一覧へ戻る</a>
     </div>
 </div>
+""" + STUDYLOG_LOCK_HTML + """
 </body>
 </html>
 """
@@ -1739,6 +1935,6 @@ def update(log_id):
 # =========================================
 if __name__ == "__main__":
     init_db()
-    app.run(debug=True)
+    app.run(debug=False)
 
 

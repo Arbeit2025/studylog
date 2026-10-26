@@ -228,12 +228,12 @@ class AnalysisTest(StudylogFixture):
             return self.module.studylog_analyze_logs(self.rows())[latest["id"]]
         self.assertEqual(result()["state"], "understanding")
         for log_id in range(1, 6):
-            response = self.client.post(f"/update/{log_id}", data={"understanding": "3", "confidence": "3", "concentration": "3", "after_test_score": "50"})
+            response = self.client.post(f"/update/{log_id}", data={**self.csrf(), "understanding": "3", "confidence": "3", "concentration": "3", "after_test_score": "50"})
             self.assertEqual(response.status_code, 302)
         self.assertEqual(result()["state"], "stable")
         self.load_app()
         self.assertEqual(result()["state"], "stable")
-        self.assertEqual(self.client.post("/delete/1").status_code, 302)
+        self.assertEqual(self.client.post("/delete/1", data=self.csrf()).status_code, 302)
         self.assertEqual(result()["history_count"], 4)
         self.assertNotIn(1, result()["history_ids"])
 

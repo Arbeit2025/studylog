@@ -22,6 +22,11 @@ Single-file Flask + SQLite study log app.
 - 状態の暫定分類、判定理由、比較データの充足度、4種類の支援の方向の表示
 
 ## 記録の流れ
+サイトを開いたら、数字4桁の暗証番号でロックを解除します。解除後は同じ
+ブラウザのセッション中、最長12時間利用できます。一覧・編集画面の「ロック」で
+すぐに入り直せます。ブラウザがセッションを復元する場合もあるため、利用を
+終えるときは「ロック」を使ってください。
+
 1. 学習内容と学習前の計画・評価を入力し、「学習前を保存」を押します。
 2. 一覧の「学習後を記録」を開き、実際の学習時間と学習後の結果を入力します。
 3. 「学習後まで保存」を押すと、同じログが学習完了になります。
@@ -80,19 +85,59 @@ Single-file Flask + SQLite study log app.
 `before_saved_at` / `after_saved_at`、最終更新日時は `updated_at` です。
 新しい保存日時はUTCのISO 8601形式です。既存の日時はそのまま保持します。
 
+## 暗証番号の設定
+暗証番号は画面や公開ソースに埋め込まず、サーバーの環境変数で設定します。
+
+| 環境変数 | 設定内容 |
+| --- | --- |
+| `STUDYLOG_PIN` | 半角数字4桁（先頭の0も可） |
+| `STUDYLOG_SECRET_KEY` | セッション署名用のランダムな秘密鍵。32文字以上 |
+| `STUDYLOG_COOKIE_SECURE` | 通常は未設定（HTTPS専用Cookie）。ローカルHTTPで試す場合だけ `0` |
+
+Renderでは既存の `studylog1` サービスのEnvironmentへ設定します。環境変数を
+保存した後、その設定を取り込むデプロイを実施してください。PINや秘密鍵を
+README、テスト、`.env` 等へ書いてコミットしないでください。
+
+PINまたは秘密鍵が未設定・不正ならHTTP 503で閉じ、ログの表示・変更を許可しません。
+PIN・秘密鍵を変更すると、既存の解除済みセッションも無効になります。
+ログの一覧・編集だけでなく、追加・更新・削除への直接アクセスもサーバー側で保護し、
+すべてのPOSTフォームでCSRFトークンを確認します。
+
+5回連続で入力を間違えると、30秒間は正しい番号でも解除できません。
+最後の誤入力から5分空いた場合は、連続失敗数をリセットします。制限は
+SQLiteの専用テーブル `studylog_auth_attempts` で共有するため、Cookieの削除や
+プロセスの再起動では解除されません。1人用の簡易ロックなので、別の訪問者による
+誤入力でも一時的に待機が発生します。再デプロイ後の制限の保持はDBの永続性に依存します。
+4桁PINは簡易的なアクセス制限です。個別アカウント・多要素認証・データの暗号化は行いません。
+
 ## Run (local)
 ```bash
 pip install -r requirements.txt
-python soapp.py
+python - <<'PY'
+import getpass
+import os
+import secrets
+os.environ["STUDYLOG_PIN"] = getpass.getpass("暗証番号（数字4桁）: ")
+os.environ["STUDYLOG_SECRET_KEY"] = secrets.token_hex(32)
+os.environ["STUDYLOG_COOKIE_SECURE"] = "0"
+from soapp import app
+app.run(debug=False)
+PY
 ```
+この起動例では秘密鍵を起動時に生成するため、再起動すると入り直しになります。
+継続したセッションが必要な運用では、十分にランダムな秘密鍵を環境変数で保持します。
 
 ## Tests
 ```bash
 python -m unittest discover -s tests -v
+python tests/http_auth_smoke.py
 ```
 実アプリを一時ディレクトリへコピーし、FlaskのHTTPルートとSQLiteで検証します。
 普段使っているDBは変更しません。追加・前後保存・繰り返し編集・再起動・
 旧DBの列追加・入力エラー・集計・絞り込み・削除を確認します。
+認証テストは専用の仮の番号とランダムな鍵を使います。未解除時の閲覧・変更拒否、
+誤入力・形式不正、ロック解除・再ロック、回数制限・待機後の復帰、期限切れ、
+Cookie属性・改ざん、CSRF、不正なサーバー設定も検証します。
 
 ## Repository
 https://studylog1.onrender.com/

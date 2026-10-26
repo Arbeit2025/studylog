@@ -1,6 +1,7 @@
 """実際のFlaskルートと、一時コピー内のSQLiteを使う回帰テスト。"""
 import importlib.util
 import os
+import secrets
 import shutil
 import sqlite3
 import tempfile
@@ -69,8 +70,17 @@ class StudylogFixture(unittest.TestCase):
         spec = importlib.util.spec_from_file_location("isolated_studylog", self.root / "soapp.py")
         self.module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.module)
-        self.module.app.config["TESTING"] = True
+        self.module.app.config.update(TESTING=True, SECRET_KEY=secrets.token_hex(32),
+                                      STUDYLOG_PIN="4826", SESSION_COOKIE_SECURE=False)
         self.client = self.module.app.test_client()
+        login = FormParser(self.client.get("/login").get_data(as_text=True)).fields
+        login["pin"] = "4826"
+        self.assertEqual(self.client.post("/login", data=login).status_code, 303)
+
+    def csrf(self):
+        self.client.get("/")
+        with self.client.session_transaction() as state:
+            return {"csrf_token": state["studylog_csrf"]}
 
     def rows(self):
         with sqlite3.connect(self.root / "studylog.db") as conn:
@@ -181,7 +191,7 @@ class StudylogTest(StudylogFixture):
         self.client.post("/add", data=self.completed())
         before = self.rows()[0]
         # 新しい項目を送らない旧クライアントでも前データを消さない。
-        response = self.client.post("/update/1", data={"study_date": "2026-10-26", "minutes": "22", "memo": "旧画面から更新"})
+        response = self.client.post("/update/1", data={**self.csrf(), "study_date": "2026-10-26", "minutes": "22", "memo": "旧画面から更新"})
         self.assertEqual(response.status_code, 302)
         after = self.rows()[0]
         self.assertEqual(after["minutes"], 22)
@@ -285,13 +295,13 @@ class StudylogTest(StudylogFixture):
         html = response.get_data(as_text=True)
         self.assertIn('href="/edit/1"', html)
         self.assertNotIn('href="/edit/2"', html)
-        self.assertEqual(self.client.post("/delete/1").status_code, 302)
+        self.assertEqual(self.client.post("/delete/1", data=self.csrf()).status_code, 302)
         self.assertEqual([row["id"] for row in self.rows()], [2])
 
     def test_completed_log_cannot_be_accidentally_reopened(self):
         self.client.post("/add", data=self.completed())
         before = self.rows()
-        self.assertEqual(self.client.post("/update/1", data={"save_stage": "before"}).status_code, 400)
+        self.assertEqual(self.client.post("/update/1", data={**self.csrf(), "save_stage": "before"}).status_code, 400)
         self.assertEqual(self.rows(), before)
 
     def test_missing_log_and_text_escaping(self):
