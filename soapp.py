@@ -39,7 +39,7 @@ app = Flask(__name__)
 # U103: DBパス設定
 # =========================================
 BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "srl_log.db"
+DB_PATH = BASE_DIR / "studylog.db"
 
 
 # =========================================
@@ -982,7 +982,7 @@ STUDYLOG_PLUS_EDIT_HTML = """
 # -----------------------------------------
 # U904: DB名取得
 # -----------------------------------------
-STUDYLOG_PLUS_DB_NAME = globals().get("DB_NAME", "studylog.db")
+STUDYLOG_PLUS_DB_NAME = DB_PATH
 
 # -----------------------------------------
 # U905: 接続関数
@@ -1522,3 +1522,4 @@ def update(log_id):
 if __name__ == "__main__":
     init_db()
     app.run(debug=True)
+
