@@ -1,0 +1,6 @@
+{% if studylog_is_admin() %}
+<a class="btn-link" href="{{ url_for('studylog_admin') }}">管理者</a>
+<a class="btn-link" href="{{ url_for('studylog_backup') }}">バックアップ</a>
+{% else %}
+<a class="btn-link" href="{{ url_for('studylog_admin_login') }}">管理者ログイン</a>
+{% endif %}

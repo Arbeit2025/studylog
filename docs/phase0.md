@@ -28,7 +28,7 @@
 
 | 画像の確認項目 | 対応 |
 | --- | --- |
-| SQLiteのバックアップ | CLIによる全対象探索、認証後ダウンロード、構造変更前の自動バックアップ |
+| SQLiteのバックアップ | CLIによる全対象探索、管理者認証後ダウンロード、構造変更前の自動バックアップ |
 | study_logsとlogsの関係 | 稼働先はlogs。study_logsは旧形式として保持し、明示的に取り込む |
 | 使用DBの統一 | STUDYLOG_DB_PATHまたはアプリ直下studylog.dbを全機能で共有 |
 | 学習記録の構造定義 | studylog_db.LOG_COLUMNS、READMEの前後評価・状態・日時の説明 |

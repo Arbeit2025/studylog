@@ -38,6 +38,7 @@ app = Flask(__name__, root_path=str(BASE_DIR))
 app.config.update(
     SECRET_KEY=os.environ.get("STUDYLOG_SECRET_KEY"),
     STUDYLOG_PIN=os.environ.get("STUDYLOG_PIN", ""),
+    STUDYLOG_ADMIN_PASSCODE=os.environ.get("STUDYLOG_ADMIN_PASSCODE", ""),
     SESSION_COOKIE_NAME="studylog_session",
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SECURE=os.environ.get("STUDYLOG_COOKIE_SECURE", "1") != "0",
@@ -55,6 +56,17 @@ def studylog_auth_ready():
     return isinstance(key, str) and len(key) >= 32 and studylog_valid_pin(app.config["STUDYLOG_PIN"])
 
 
+def studylog_admin_ready():
+    value = app.config["STUDYLOG_ADMIN_PASSCODE"]
+    return isinstance(value, str) and len(value) == 8 and value.isascii() and value.isalnum()
+
+
+def studylog_admin_version():
+    # Separate signature: a normal unlock or a submitted role cannot grant admin.
+    value = "studylog-admin:" + app.config["STUDYLOG_ADMIN_PASSCODE"]
+    return hmac.new(app.secret_key.encode(), value.encode(), hashlib.sha256).hexdigest()
+
+
 def studylog_auth_version():
     # PINの変更時には、それまでの解除済みCookieも無効になる。
     return hmac.new(app.secret_key.encode(), app.config["STUDYLOG_PIN"].encode(), hashlib.sha256).hexdigest()
@@ -66,6 +78,15 @@ def studylog_is_unlocked():
     return (isinstance(version, str) and isinstance(unlocked_at, (int, float))
             and 0 <= time.time() - unlocked_at < 12 * 60 * 60
             and hmac.compare_digest(version, studylog_auth_version()))
+
+
+def studylog_is_admin():
+    version = session.get("studylog_admin_version")
+    granted_at = session.get("studylog_admin_at")
+    return (studylog_admin_ready() and studylog_is_unlocked()
+            and isinstance(version, str) and isinstance(granted_at, (int, float))
+            and 0 <= time.time() - granted_at < 12 * 60 * 60
+            and hmac.compare_digest(version, studylog_admin_version()))
 
 
 def studylog_csrf_token():
@@ -81,7 +102,10 @@ def studylog_require_unlock():
     if not studylog_auth_ready():
         return render_template("login.html", configured=False,
                                       error="暗証番号の設定が完了していません。管理者がサーバー設定を確認してください。"), 503
-    if request.endpoint != "studylog_login" and not studylog_is_unlocked():
+    if not studylog_is_admin():
+        session.pop("studylog_admin_version", None)
+        session.pop("studylog_admin_at", None)
+    if request.endpoint not in {"studylog_login", "studylog_admin_login"} and not studylog_is_unlocked():
         # favicon等の別リクエストで、入力中のログインフォームのCSRFを消さない。
         session.pop("studylog_auth_version", None)
         session.pop("studylog_unlocked_at", None)
@@ -130,6 +154,57 @@ def studylog_login():
     return response
 
 
+@app.route("/admin/login", methods=["GET", "POST"])
+def studylog_admin_login():
+    if studylog_is_admin():
+        return redirect(url_for("studylog_admin"), code=303)
+    if not studylog_admin_ready():
+        return render_template("admin_login.html", configured=False,
+                               error="管理者ログインの設定が完了していません。サーバー設定を確認してください。"), 503
+    error, status, retry_after = None, 200, 0
+    if request.method == "POST":
+        accepted, retry_after = database.try_pin(
+            DB_PATH, request.form.get("passcode", ""),
+            app.config["STUDYLOG_ADMIN_PASSCODE"], time.time(), admin=True)
+        if accepted:
+            session.clear()
+            session["studylog_auth_version"] = studylog_auth_version()
+            session["studylog_unlocked_at"] = time.time()
+            session["studylog_admin_version"] = studylog_admin_version()
+            session["studylog_admin_at"] = time.time()
+            session.permanent = False
+            return redirect(url_for("studylog_admin"), code=303)
+        status = 429 if retry_after else 401
+        error = (f"入力を繰り返し間違えたため、{retry_after}秒ほど待ってからお試しください。"
+                 if retry_after else "管理者パスコードが違います。半角英数字8文字を確認してください。")
+    response = app.make_response((render_template("admin_login.html", configured=True, error=error), status))
+    if retry_after:
+        response.headers["Retry-After"] = str(retry_after)
+    return response
+
+
+def studylog_admin_required():
+    return render_template("error.html", message="この操作には管理者ログインが必要です。",
+                           admin_login_required=True), 403
+
+
+@app.route("/admin")
+def studylog_admin():
+    if not studylog_is_admin():
+        return studylog_admin_required()
+    return render_template("admin.html")
+
+
+@app.route("/admin/logout", methods=["POST"])
+def studylog_admin_logout():
+    if not studylog_is_admin():
+        return studylog_admin_required()
+    session.pop("studylog_admin_version", None)
+    session.pop("studylog_admin_at", None)
+    session.pop("studylog_csrf", None)
+    return redirect(url_for("index"), code=303)
+
+
 @app.route("/logout", methods=["POST"])
 def studylog_logout():
     session.clear()
@@ -139,6 +214,7 @@ def studylog_logout():
 @app.context_processor
 def studylog_auth_context():
     return {"studylog_csrf_token": studylog_csrf_token,
+            "studylog_is_admin": studylog_is_admin,
             "studylog_number": studylog_display_number}
 
 
@@ -397,6 +473,8 @@ app.add_url_rule("/delete/<int:log_id>", endpoint="delete_log", view_func=studyl
 
 @app.route("/backup")
 def studylog_backup():
+    if not studylog_is_admin():
+        return studylog_admin_required()
     # Online backup captures committed WAL data without changing the source DB.
     with tempfile.TemporaryDirectory(prefix="studylog-backup-") as directory:
         path = database.backup_database(DB_PATH, Path(directory))

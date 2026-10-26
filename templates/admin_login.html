@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="ja">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>管理者ログイン · studylog</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='login.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='theme.css') }}">
+    <script src="{{ url_for('static', filename='theme.js') }}"></script>
+</head>
+<body>
+<main>
+    <div class="login-theme">{% include 'theme_control.html' %}</div>
+    <h1>管理者ログイン</h1>
+    <p>管理者パスコードを入力すると、バックアップなどの管理機能を利用できます。</p>
+    {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+    {% if configured %}
+    <form method="post" action="{{ url_for('studylog_admin_login') }}">
+        <input type="hidden" name="csrf_token" value="{{ studylog_csrf_token() }}">
+        <label for="passcode">管理者パスコード（半角英数字8文字）</label>
+        <input id="passcode" name="passcode" type="password" pattern="[A-Za-z0-9]{8}"
+            minlength="8" maxlength="8" autocomplete="current-password" autocapitalize="none"
+            spellcheck="false" required autofocus aria-describedby="passcode-help"
+            {% if error %}aria-invalid="true"{% endif %}>
+        <p id="passcode-help">大文字・小文字を区別します。</p>
+        <button type="submit">管理者ログイン</button>
+    </form>
+    {% endif %}
+    <a class="login-back" href="{{ url_for('studylog_login') }}">通常のログインへ戻る</a>
+</main>
+</body>
+</html>
