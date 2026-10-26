@@ -541,8 +541,124 @@ def delete_log(log_id):
 # -----------------------------------------
 # U901: 追加import
 # -----------------------------------------
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
+from contextlib import closing
+import math
 from flask import render_template_string
+
+# 追加と編集で同じ入力欄を使い、保存時の入力エラーでも値を残す。
+STUDYLOG_PLUS_FORM_HTML = """
+{% macro field_value(name) -%}
+    {{ form_data.get(name) if form_data.get(name) is not none else '' }}
+{%- endmacro %}
+{% macro rating(name, label) -%}
+    <div>
+        <label for="{{ name }}">{{ label }}（1〜5）</label>
+        <select id="{{ name }}" name="{{ name }}">
+            <option value="">未入力</option>
+            {% for i in [1,2,3,4,5] %}
+                <option value="{{ i }}" {% if form_data.get(name)|string == i|string %}selected{% endif %}>{{ i }}</option>
+            {% endfor %}
+        </select>
+    </div>
+{%- endmacro %}
+{% if error %}
+    <p role="alert" style="color:#991b1b;background:#fef2f2;padding:12px;border-radius:12px;">{{ error }}</p>
+{% endif %}
+<p class="muted">学習前だけでも保存できます。一覧の「学習後を記録」から、同じログに結果を追記できます。</p>
+{% if is_edit %}
+    <p>状態：<strong>{{ '学習中' if form_data.get('status') == 'in_progress' else '学習完了' }}</strong></p>
+{% endif %}
+<form method="post" action="{{ form_action }}">
+    <div class="grid-2">
+        <div>
+            <label for="study_date">学習日</label>
+            <input id="study_date" type="date" name="study_date" value="{{ field_value('study_date') }}" required>
+        </div>
+        <div>
+            <label for="category">カテゴリ</label>
+            <input id="category" type="text" name="category" value="{{ field_value('category') }}" placeholder="例: 卒論">
+        </div>
+    </div>
+    <div style="margin-top:14px;">
+        <label for="task">学習内容</label>
+        <textarea id="task" name="task" placeholder="例: 第2章を読み、要点をまとめる">{{ field_value('task') }}</textarea>
+    </div>
+
+    <div class="section">
+        <h3>学習前</h3>
+        <label for="goal">今日の目標</label>
+        <textarea id="goal" name="goal">{{ field_value('goal') }}</textarea>
+        <div class="grid-2" style="margin-top:14px;">
+            <div>
+                <label for="planned_minutes">予定学習時間（分）</label>
+                <input id="planned_minutes" type="number" name="planned_minutes" min="1" step="1" value="{{ field_value('planned_minutes') }}">
+            </div>
+            <div>
+                <label for="strategy">学習方法・作戦</label>
+                <input id="strategy" type="text" name="strategy" value="{{ field_value('strategy') }}" placeholder="例: 25分ずつ区切って取り組む">
+            </div>
+        </div>
+        <div class="grid-3" style="margin-top:14px;">
+            {{ rating('before_concentration', '学習前の集中できそう度') }}
+            {{ rating('before_understanding', '学習前の理解度') }}
+            {{ rating('before_confidence', '学習前の自信度') }}
+        </div>
+        <div style="margin-top:14px;">
+            <label for="before_test_score">学習前の確認テスト（0〜100点換算・任意）</label>
+            <input id="before_test_score" type="number" name="before_test_score" min="0" max="100" step="any" value="{{ field_value('before_test_score') }}">
+        </div>
+    </div>
+
+    <div class="section">
+        <h3>学習後</h3>
+        <p class="muted">学習が終わったら入力してください。未入力の評価は空欄のまま保存されます。</p>
+        <label for="minutes">実際の学習時間（分・学習完了時は必須）</label>
+        <input id="minutes" type="number" name="minutes" min="1" step="1" value="{{ field_value('minutes') }}">
+        <div class="grid-3" style="margin-top:14px;">
+            {{ rating('concentration', '学習後の集中度') }}
+            {{ rating('understanding', '学習後の理解度') }}
+            {{ rating('confidence', '学習後の自信度') }}
+        </div>
+        <div style="margin-top:14px;">
+            <label for="after_test_score">学習後の確認テスト（0〜100点換算・任意）</label>
+            <input id="after_test_score" type="number" name="after_test_score" min="0" max="100" step="any" value="{{ field_value('after_test_score') }}">
+        </div>
+        <div class="grid-2" style="margin-top:14px;">
+            <div>
+                <label for="success_reason">うまくいった理由</label>
+                <textarea id="success_reason" name="success_reason">{{ field_value('success_reason') }}</textarea>
+            </div>
+            <div>
+                <label for="fail_reason">うまくいかなかった理由</label>
+                <textarea id="fail_reason" name="fail_reason">{{ field_value('fail_reason') }}</textarea>
+            </div>
+        </div>
+        <div style="margin-top:14px;">
+            <label for="next_action">次回どうするか</label>
+            <textarea id="next_action" name="next_action">{{ field_value('next_action') }}</textarea>
+        </div>
+        <div style="margin-top:14px;">
+            <label for="stumble_reason">つまずき理由</label>
+            <select id="stumble_reason" name="stumble_reason">
+                {% for item in stumble_options %}
+                    <option value="{{ item }}" {% if form_data.get('stumble_reason') == item %}selected{% endif %}>{{ item or '選択なし' }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div style="margin-top:14px;">
+            <label for="memo">メモ</label>
+            <textarea id="memo" name="memo">{{ field_value('memo') }}</textarea>
+        </div>
+    </div>
+    <div class="grid-2" style="margin-top:16px;">
+        {% if not is_edit or form_data.get('status') == 'in_progress' %}
+            <button type="submit" name="save_stage" value="before">{{ '途中保存' if is_edit else '学習前を保存' }}</button>
+        {% endif %}
+        <button type="submit" name="save_stage" value="after">{{ '更新' if is_edit and form_data.get('status') == 'completed' else '学習後まで保存' }}</button>
+    </div>
+</form>
+"""
 
 # -----------------------------------------
 # U902: 追加テンプレート（一覧）
@@ -623,103 +739,7 @@ STUDYLOG_PLUS_INDEX_HTML = """
 
     <div class="card">
         <h2>学習ログを追加</h2>
-        <form method="post" action="/add">
-            <div class="grid-3">
-                <div>
-                    <label>学習日</label>
-                    <input type="date" name="study_date" value="{{ today }}" required>
-                </div>
-                <div>
-                    <label>カテゴリ</label>
-                    <input type="text" name="category" placeholder="例: 卒論">
-                </div>
-                <div>
-                    <label>学習時間（分）</label>
-                    <input type="number" name="minutes" min="1" required>
-                </div>
-            </div>
-
-            <div class="grid-3" style="margin-top:14px;">
-                <div>
-                    <label>集中度（1〜5）</label>
-                    <select name="concentration">
-                        <option value="1">1</option>
-                        <option value="2">2</option>
-                        <option value="3" selected>3</option>
-                        <option value="4">4</option>
-                        <option value="5">5</option>
-                    </select>
-                </div>
-                <div>
-                    <label>理解度（1〜5）</label>
-                    <select name="understanding">
-                        <option value="1">1</option>
-                        <option value="2">2</option>
-                        <option value="3" selected>3</option>
-                        <option value="4">4</option>
-                        <option value="5">5</option>
-                    </select>
-                </div>
-                <div>
-                    <label>自信度（1〜5）</label>
-                    <select name="confidence">
-                        <option value="1">1</option>
-                        <option value="2">2</option>
-                        <option value="3" selected>3</option>
-                        <option value="4">4</option>
-                        <option value="5">5</option>
-                    </select>
-                </div>
-            </div>
-
-            <div class="section">
-                <h3>学習前</h3>
-                <label>今日の目標</label>
-                <textarea name="goal" placeholder="例: 本を2冊読む"></textarea>
-            </div>
-
-            <div class="section">
-                <h3>学習後</h3>
-                <div class="grid-2">
-                    <div>
-                        <label>うまくいった理由</label>
-                        <textarea name="success_reason"></textarea>
-                    </div>
-                    <div>
-                        <label>うまくいかなかった理由</label>
-                        <textarea name="fail_reason"></textarea>
-                    </div>
-                </div>
-
-                <div style="margin-top:14px;">
-                    <label>次回どうするか</label>
-                    <textarea name="next_action"></textarea>
-                </div>
-
-                <div style="margin-top:14px;">
-                    <label>つまずき理由</label>
-                    <select name="stumble_reason">
-                        <option value="">選択なし</option>
-                        <option value="集中できなかった">集中できなかった</option>
-                        <option value="難しすぎた">難しすぎた</option>
-                        <option value="計画不足">計画不足</option>
-                        <option value="時間不足">時間不足</option>
-                        <option value="疲れていた">疲れていた</option>
-                        <option value="環境が悪かった">環境が悪かった</option>
-                        <option value="その他">その他</option>
-                    </select>
-                </div>
-
-                <div style="margin-top:14px;">
-                    <label>メモ</label>
-                    <textarea name="memo"></textarea>
-                </div>
-            </div>
-
-            <div style="margin-top:16px;">
-                <button type="submit">保存</button>
-            </div>
-        </form>
+""" + STUDYLOG_PLUS_FORM_HTML + """
     </div>
 
     <div class="card">
@@ -763,6 +783,7 @@ STUDYLOG_PLUS_INDEX_HTML = """
 
     <div class="card">
         <h2>集計</h2>
+        <p class="muted">完了 {{ summary["completed_count"] }}件 / 学習中 {{ summary["in_progress_count"] }}件。時間・平均は学習完了の記録を集計します。</p>
         <div class="summary">
             <div class="summary-box">
                 <div class="summary-label">件数</div>
@@ -792,18 +813,43 @@ STUDYLOG_PLUS_INDEX_HTML = """
                     <div>
                         <span class="pill">{{ log["study_date"] }}</span>
                         <span class="pill">{{ log["category"] or "カテゴリ未設定" }}</span>
-                        <span class="pill">{{ log["minutes"] }}分</span>
-                        <span class="pill">集中 {{ log["concentration"] }}</span>
-                        <span class="pill">理解 {{ log["understanding"] }}</span>
-                        <span class="pill">自信 {{ log["confidence"] or 3 }}</span>
+                        <span class="pill">{{ '学習中' if log['status'] == 'in_progress' else '学習完了' }}</span>
+                        {% if log['status'] == 'completed' %}
+                            <span class="pill">{{ log["minutes"] }}分</span>
+                            <span class="pill">集中 {{ log["concentration"] if log["concentration"] is not none else '未記録' }}</span>
+                            <span class="pill">理解 {{ log["understanding"] if log["understanding"] is not none else '未記録' }}</span>
+                            <span class="pill">自信 {{ log["confidence"] if log["confidence"] is not none else '未記録' }}</span>
+                        {% endif %}
                         {% if log["stumble_reason"] %}
                             <span class="pill">つまずき: {{ log["stumble_reason"] }}</span>
                         {% endif %}
                     </div>
 
                     <div class="section">
+                        <strong>学習内容</strong>
+                        <div class="muted">{{ log["task"] or "未記録" }}</div>
+                    </div>
+
+                    <div class="section">
                         <strong>学習前の目標</strong>
                         <div class="muted">{{ log["goal"] or "なし" }}</div>
+                        <div class="muted">予定時間: {{ (log["planned_minutes"]|string + '分') if log["planned_minutes"] is not none else '未記録' }}</div>
+                        <div class="muted">学習方法: {{ log["strategy"] or "未記録" }}</div>
+                    </div>
+
+                    <div class="section">
+                        <strong>学習前 → 学習後</strong>
+                        <div class="muted">集中できそう度 → 集中度: {{ log['before_concentration'] if log['before_concentration'] is not none else '未記録' }} → {{ log['concentration'] if log['status'] == 'completed' and log['concentration'] is not none else '未記録' }}</div>
+                        {% for before, after, label, unit in [
+                            ('before_understanding', 'understanding', '理解度', ''),
+                            ('before_confidence', 'confidence', '自信度', ''),
+                            ('before_test_score', 'after_test_score', '確認テスト', '点')
+                        ] %}
+                            <div class="muted">{{ label }}: {{ log[before] if log[before] is not none else '未記録' }} → {{ log[after] if log['status'] == 'completed' and log[after] is not none else '未記録' }}{% if log['status'] == 'completed' and log[before] is not none and log[after] is not none %}（変化 {{ '%+g'|format(log[after] - log[before]) }}{{ unit }}）{% endif %}</div>
+                        {% endfor %}
+                        {% if log['status'] == 'completed' and log['planned_minutes'] is not none and log['minutes'] is not none %}
+                            <div class="muted">学習時間: {{ log['planned_minutes'] }}分 → {{ log['minutes'] }}分（予定との差 {{ '%+d'|format(log['minutes'] - log['planned_minutes']) }}分）</div>
+                        {% endif %}
                     </div>
 
                     <div class="section">
@@ -827,7 +873,7 @@ STUDYLOG_PLUS_INDEX_HTML = """
                     </div>
 
                     <div class="actions">
-                        <a class="btn-link" href="/edit/{{ log['id'] }}">編集</a>
+                        <a class="btn-link" href="/edit/{{ log['id'] }}">{{ '学習後を記録' if log['status'] == 'in_progress' else '編集' }}</a>
                         <form method="post" action="/delete/{{ log['id'] }}" onsubmit="return confirm('このログを削除しますか？');">
                             <button type="submit" class="danger">削除</button>
                         </form>
@@ -877,6 +923,7 @@ STUDYLOG_PLUS_EDIT_HTML = """
         button{border:none;background:#222;color:#fff;font-weight:700;cursor:pointer;}
         .section{margin-top:16px;padding-top:14px;border-top:1px dashed #e5e7eb;}
         .back{display:inline-block;margin-top:14px;color:#374151;text-decoration:none;font-weight:700;}
+        .muted{color:#666;font-size:13px;white-space:pre-wrap;}
         @media (max-width:900px){.grid-2,.grid-3{grid-template-columns:1fr;}}
     </style>
 </head>
@@ -885,92 +932,7 @@ STUDYLOG_PLUS_EDIT_HTML = """
     <div class="card">
         <h1>ログを編集</h1>
 
-        <form method="post" action="/update/{{ log['id'] }}">
-            <div class="grid-3">
-                <div>
-                    <label>学習日</label>
-                    <input type="date" name="study_date" value="{{ log['study_date'] }}" required>
-                </div>
-                <div>
-                    <label>カテゴリ</label>
-                    <input type="text" name="category" value="{{ log['category'] or '' }}">
-                </div>
-                <div>
-                    <label>学習時間（分）</label>
-                    <input type="number" name="minutes" min="1" value="{{ log['minutes'] }}" required>
-                </div>
-            </div>
-
-            <div class="grid-3" style="margin-top:14px;">
-                <div>
-                    <label>集中度（1〜5）</label>
-                    <select name="concentration">
-                        {% for i in [1,2,3,4,5] %}
-                            <option value="{{ i }}" {% if log['concentration'] == i %}selected{% endif %}>{{ i }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div>
-                    <label>理解度（1〜5）</label>
-                    <select name="understanding">
-                        {% for i in [1,2,3,4,5] %}
-                            <option value="{{ i }}" {% if log['understanding'] == i %}selected{% endif %}>{{ i }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div>
-                    <label>自信度（1〜5）</label>
-                    <select name="confidence">
-                        {% for i in [1,2,3,4,5] %}
-                            <option value="{{ i }}" {% if log['confidence'] == i %}selected{% endif %}>{{ i }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-            </div>
-
-            <div class="section">
-                <h3>学習前</h3>
-                <label>今日の目標</label>
-                <textarea name="goal">{{ log['goal'] or '' }}</textarea>
-            </div>
-
-            <div class="section">
-                <h3>学習後</h3>
-                <div class="grid-2">
-                    <div>
-                        <label>うまくいった理由</label>
-                        <textarea name="success_reason">{{ log['success_reason'] or '' }}</textarea>
-                    </div>
-                    <div>
-                        <label>うまくいかなかった理由</label>
-                        <textarea name="fail_reason">{{ log['fail_reason'] or '' }}</textarea>
-                    </div>
-                </div>
-
-                <div style="margin-top:14px;">
-                    <label>次回どうするか</label>
-                    <textarea name="next_action">{{ log['next_action'] or '' }}</textarea>
-                </div>
-
-                <div style="margin-top:14px;">
-                    <label>つまずき理由</label>
-                    <select name="stumble_reason">
-                        {% for item in stumble_options %}
-                            <option value="{{ item }}" {% if log['stumble_reason'] == item %}selected{% endif %}>{{ item }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-
-                <div style="margin-top:14px;">
-                    <label>メモ</label>
-                    <textarea name="memo">{{ log['memo'] or '' }}</textarea>
-                </div>
-            </div>
-
-            <div style="margin-top:16px;">
-                <button type="submit">更新</button>
-            </div>
-        </form>
+""" + STUDYLOG_PLUS_FORM_HTML + """
 
         <a class="back" href="/">← 一覧へ戻る</a>
     </div>
@@ -1019,7 +981,19 @@ def studylog_plus_add_missing_columns():
         "success_reason": "TEXT",
         "fail_reason": "TEXT",
         "next_action": "TEXT",
-        "stumble_reason": "TEXT"
+        "stumble_reason": "TEXT",
+        "task": "TEXT",
+        "planned_minutes": "INTEGER",
+        "strategy": "TEXT",
+        "before_concentration": "INTEGER",
+        "before_understanding": "INTEGER",
+        "before_confidence": "INTEGER",
+        "before_test_score": "REAL",
+        "after_test_score": "REAL",
+        "status": "TEXT NOT NULL DEFAULT 'completed'",
+        "before_saved_at": "TEXT",
+        "after_saved_at": "TEXT",
+        "updated_at": "TEXT"
     }
 
     for col_name, col_type in needed.items():
@@ -1117,9 +1091,11 @@ def studylog_plus_get_summary(where_sql="", params=None):
         f'''
         SELECT
             COUNT(*) AS count,
-            COALESCE(SUM(minutes), 0) AS total_minutes,
-            ROUND(COALESCE(AVG(concentration), 0), 1) AS avg_concentration,
-            ROUND(COALESCE(AVG(understanding), 0), 1) AS avg_understanding
+            COALESCE(SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END), 0) AS completed_count,
+            COALESCE(SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END), 0) AS in_progress_count,
+            COALESCE(SUM(CASE WHEN status = 'completed' THEN minutes END), 0) AS total_minutes,
+            ROUND(COALESCE(AVG(CASE WHEN status = 'completed' THEN concentration END), 0), 1) AS avg_concentration,
+            ROUND(COALESCE(AVG(CASE WHEN status = 'completed' THEN understanding END), 0), 1) AS avg_understanding
         FROM logs
         {where_sql}
         ''',
@@ -1129,6 +1105,8 @@ def studylog_plus_get_summary(where_sql="", params=None):
 
     return {
         "count": row["count"],
+        "completed_count": row["completed_count"],
+        "in_progress_count": row["in_progress_count"],
         "total_minutes": row["total_minutes"],
         "avg_concentration": row["avg_concentration"],
         "avg_understanding": row["avg_understanding"]
@@ -1160,80 +1138,114 @@ def studylog_plus_get_log(log_id):
 # -----------------------------------------
 # U913: 追加処理本体
 # -----------------------------------------
+STUDYLOG_PLUS_STUMBLE_OPTIONS = [
+    "", "集中できなかった", "難しすぎた", "計画不足", "時間不足",
+    "疲れていた", "環境が悪かった", "その他"
+]
+
+
+def studylog_plus_form_data(form, existing=None):
+    """省略された新項目は既存値を保持し、明示的な空欄だけを未測定に戻す。"""
+    current = dict(existing) if existing is not None else {}
+    values = {}
+    stage = form.get("save_stage", "after")
+    if stage not in ("before", "after"):
+        raise ValueError("保存方法を選び直してください。")
+    if current.get("status") == "completed" and stage == "before":
+        raise ValueError("学習完了のログは「更新」で保存してください。")
+
+    def raw(name):
+        value = form.get(name, current.get(name))
+        return str(value).strip() if value is not None else ""
+
+    study_date = raw("study_date")
+    try:
+        if date.fromisoformat(study_date).isoformat() != study_date:
+            raise ValueError
+    except ValueError:
+        raise ValueError("学習日を正しい日付で入力してください。") from None
+    values["study_date"] = study_date
+
+    for name in ("category", "task", "goal", "strategy", "success_reason",
+                 "fail_reason", "next_action", "stumble_reason", "memo"):
+        values[name] = raw(name)
+
+    def integer(name, label, minimum, maximum=None, required=False):
+        text = raw(name)
+        if not text:
+            if required:
+                raise ValueError(f"{label}を入力してください。")
+            return None
+        try:
+            value = int(text)
+        except ValueError:
+            raise ValueError(f"{label}は整数で入力してください。") from None
+        if value < minimum or (maximum is not None and value > maximum):
+            bounds = f"{minimum}〜{maximum}" if maximum is not None else f"{minimum}以上"
+            raise ValueError(f"{label}は{bounds}で入力してください。")
+        return value
+
+    # SQLiteで扱える範囲に収め、極端な値でも保存エラーにしない。
+    values["planned_minutes"] = integer("planned_minutes", "予定学習時間", 1, 2147483647)
+    values["minutes"] = integer("minutes", "実際の学習時間", 1, 2147483647, stage == "after")
+    for name, label in (
+        ("before_concentration", "学習前の集中できそう度"),
+        ("before_understanding", "学習前の理解度"),
+        ("before_confidence", "学習前の自信度"),
+        ("concentration", "学習後の集中度"),
+        ("understanding", "学習後の理解度"),
+        ("confidence", "学習後の自信度"),
+    ):
+        values[name] = integer(name, label, 1, 5)
+
+    for name, label in (("before_test_score", "学習前の確認テスト"),
+                        ("after_test_score", "学習後の確認テスト")):
+        text = raw(name)
+        try:
+            score = float(text) if text else None
+        except ValueError:
+            raise ValueError(f"{label}は0〜100の数値で入力してください。") from None
+        if score is not None and (not math.isfinite(score) or not 0 <= score <= 100):
+            raise ValueError(f"{label}は0〜100の数値で入力してください。")
+        values[name] = score
+
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    values["status"] = "in_progress" if stage == "before" else "completed"
+    before_fields = ("goal", "planned_minutes", "strategy", "before_concentration",
+                     "before_understanding", "before_confidence", "before_test_score")
+    has_before = any(values[name] is not None and values[name] != "" for name in before_fields)
+    values["before_saved_at"] = current.get("before_saved_at") or (now if has_before or stage == "before" else None)
+    values["after_saved_at"] = current.get("after_saved_at") or (now if stage == "after" else None)
+    values["updated_at"] = now
+    return values
+
+
 def studylog_plus_insert(form):
-    conn = studylog_plus_get_conn()
-    conn.execute("""
-        INSERT INTO logs (
-            study_date,
-            category,
-            minutes,
-            concentration,
-            understanding,
-            confidence,
-            goal,
-            success_reason,
-            fail_reason,
-            next_action,
-            stumble_reason,
-            memo,
-            created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        form.get("study_date", ""),
-        form.get("category", "").strip(),
-        int(form.get("minutes", 0)),
-        int(form.get("concentration", 3)),
-        int(form.get("understanding", 3)),
-        int(form.get("confidence", 3)),
-        form.get("goal", "").strip(),
-        form.get("success_reason", "").strip(),
-        form.get("fail_reason", "").strip(),
-        form.get("next_action", "").strip(),
-        form.get("stumble_reason", "").strip(),
-        form.get("memo", "").strip(),
-        datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    ))
-    conn.commit()
-    conn.close()
+    values = studylog_plus_form_data(form)
+    values["created_at"] = values["updated_at"]
+    # カラム名は上の固定辞書からのみ取得し、入力値はプレースホルダで渡す。
+    columns = ", ".join(values)
+    placeholders = ", ".join("?" for _ in values)
+    with closing(studylog_plus_get_conn()) as conn, conn:
+        cursor = conn.execute(
+            f"INSERT INTO logs ({columns}) VALUES ({placeholders})", tuple(values.values())
+        )
+        return cursor.lastrowid
 
 # -----------------------------------------
 # U914: 更新処理本体
 # -----------------------------------------
 def studylog_plus_update_db(log_id, form):
-    conn = studylog_plus_get_conn()
-    conn.execute("""
-        UPDATE logs
-        SET
-            study_date = ?,
-            category = ?,
-            minutes = ?,
-            concentration = ?,
-            understanding = ?,
-            confidence = ?,
-            goal = ?,
-            success_reason = ?,
-            fail_reason = ?,
-            next_action = ?,
-            stumble_reason = ?,
-            memo = ?
-        WHERE id = ?
-    """, (
-        form.get("study_date", ""),
-        form.get("category", "").strip(),
-        int(form.get("minutes", 0)),
-        int(form.get("concentration", 3)),
-        int(form.get("understanding", 3)),
-        int(form.get("confidence", 3)),
-        form.get("goal", "").strip(),
-        form.get("success_reason", "").strip(),
-        form.get("fail_reason", "").strip(),
-        form.get("next_action", "").strip(),
-        form.get("stumble_reason", "").strip(),
-        form.get("memo", "").strip(),
-        log_id
-    ))
-    conn.commit()
-    conn.close()
+    with closing(studylog_plus_get_conn()) as conn, conn:
+        current = conn.execute("SELECT * FROM logs WHERE id = ?", (log_id,)).fetchone()
+        if current is None:
+            return False
+        values = studylog_plus_form_data(form, current)
+        assignments = ", ".join(f"{name} = ?" for name in values)
+        conn.execute(
+            f"UPDATE logs SET {assignments} WHERE id = ?", (*values.values(), log_id)
+        )
+    return True
 
 # -----------------------------------------
 # U915: 削除処理本体
@@ -1247,7 +1259,7 @@ def studylog_plus_delete_db(log_id):
 # -----------------------------------------
 # U916: 新しい一覧画面
 # -----------------------------------------
-def studylog_plus_index():
+def studylog_plus_index(form_data=None, error=None):
     where_sql, params, filters = studylog_plus_build_filters()
     logs = studylog_plus_get_logs(where_sql, params)
     summary = studylog_plus_get_summary(where_sql, params)
@@ -1259,48 +1271,56 @@ def studylog_plus_index():
         summary=summary,
         categories=categories,
         filters=filters,
-        today=date.today().isoformat()
+        form_data=form_data if form_data is not None else {"study_date": date.today().isoformat()},
+        form_action="/add",
+        is_edit=False,
+        error=error,
+        stumble_options=STUDYLOG_PLUS_STUMBLE_OPTIONS
     )
 
 # -----------------------------------------
 # U917: 新しい追加処理
 # -----------------------------------------
 def studylog_plus_add():
-    studylog_plus_insert(request.form)
+    try:
+        studylog_plus_insert(request.form)
+    except ValueError as exc:
+        return studylog_plus_index(dict(request.form), str(exc)), 400
     return redirect("/")
 
 # -----------------------------------------
 # U918: 編集画面
 # -----------------------------------------
-def studylog_plus_edit(log_id):
+def studylog_plus_edit(log_id, form_data=None, error=None):
     log = studylog_plus_get_log(log_id)
     if log is None:
         return "log not found", 404
 
-    stumble_options = [
-        "",
-        "集中できなかった",
-        "難しすぎた",
-        "計画不足",
-        "時間不足",
-        "疲れていた",
-        "環境が悪かった",
-        "その他"
-    ]
-
     return render_template_string(
         STUDYLOG_PLUS_EDIT_HTML,
-        log=log,
-        stumble_options=stumble_options
+        form_data=form_data if form_data is not None else dict(log),
+        form_action=f"/update/{log_id}",
+        is_edit=True,
+        error=error,
+        stumble_options=STUDYLOG_PLUS_STUMBLE_OPTIONS
     )
 
 # -----------------------------------------
 # U919: 更新処理
 # -----------------------------------------
 def studylog_plus_update(log_id):
-    if studylog_plus_get_log(log_id) is None:
+    current = studylog_plus_get_log(log_id)
+    if current is None:
         return "log not found", 404
-    studylog_plus_update_db(log_id, request.form)
+    try:
+        if not studylog_plus_update_db(log_id, request.form):
+            return "log not found", 404
+    except ValueError as exc:
+        form_data = dict(current)
+        form_data.update(request.form)
+        # 保存状態はDBの値を使い、エラー画面でも完了・途中のボタンを保つ。
+        form_data["status"] = current["status"]
+        return studylog_plus_edit(log_id, form_data, str(exc)), 400
     return redirect("/")
 
 # -----------------------------------------
@@ -1522,4 +1542,5 @@ def update(log_id):
 if __name__ == "__main__":
     init_db()
     app.run(debug=True)
+
 
