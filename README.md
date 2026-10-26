@@ -311,6 +311,7 @@ DBエラーは内部パス等を画面に含めず503で返し、書き込みは
 入力の上限はカテゴリ100文字、メモ10,000文字、その他の文章2,000文字、要求全体256KiBです。
 期間指定は日付形式と開始・終了の順序を検証します。「今日」「今週」「今月」は日本時間で計算します。
 
-## Repository
-https://studylog1.onrender.com/
+## Repository / 公開サイト
+- リポジトリ: https://github.com/Arbeit2025/studylog
+- 公開サイト: https://studylog1.onrender.com/
 
