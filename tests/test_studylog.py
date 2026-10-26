@@ -55,7 +55,7 @@ class FormParser(HTMLParser):
             self.finished = True
 
 
-class StudylogTest(unittest.TestCase):
+class StudylogFixture(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory(prefix="studylog-test-")
         self.root = Path(self.directory.name)
@@ -98,6 +98,7 @@ class StudylogTest(unittest.TestCase):
                     save_stage="after")
         return data
 
+class StudylogTest(StudylogFixture):
     def test_before_then_after_using_rendered_form(self):
         self.assertEqual(self.client.post("/add", data=self.before()).status_code, 302)
         before = self.rows()[0]

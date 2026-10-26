@@ -543,6 +543,7 @@ def delete_log(log_id):
 # -----------------------------------------
 from datetime import datetime, date, timedelta, timezone
 from contextlib import closing
+from collections import defaultdict, deque
 import math
 from flask import render_template_string
 
@@ -835,6 +836,43 @@ STUDYLOG_PLUS_INDEX_HTML = """
                         <div class="muted">{{ log["goal"] or "なし" }}</div>
                         <div class="muted">予定時間: {{ (log["planned_minutes"]|string + '分') if log["planned_minutes"] is not none else '未記録' }}</div>
                         <div class="muted">学習方法: {{ log["strategy"] or "未記録" }}</div>
+                    </div>
+
+                    {% set analysis = analyses[log['id']] %}
+                    <div class="section analysis" data-log-id="{{ log['id'] }}" data-state="{{ analysis['state'] }}">
+                        <h3>状態分類・過去ログとの比較</h3>
+                        <span class="pill">{{ analysis['label'] }}</span>
+                        <div class="muted">{{ analysis['reason'] }}</div>
+                        <div class="muted">支援の方向: {{ analysis['support_label'] }}</div>
+                        <div>{{ analysis['action'] }}</div>
+                        <details style="margin-top:10px;">
+                            <summary>比較の内訳（同じカテゴリの過去{{ analysis['history_count'] }}件）</summary>
+                            <p class="muted">{{ analysis['evidence'] }}。入力記録から見た暫定的な傾向です。</p>
+                            <div style="overflow-x:auto;">
+                                <table style="width:100%;min-width:390px;text-align:left;border-spacing:8px;">
+                                    <caption>学習後の値と直前5件以内の平均</caption>
+                                    <thead><tr><th scope="col">項目</th><th scope="col">今回</th><th scope="col">過去平均</th><th scope="col">差</th><th scope="col">比較数</th></tr></thead>
+                                    <tbody>
+                                    {% for metric in analysis['metrics'] %}
+                                        <tr>
+                                            <th scope="row">{{ metric['label'] }}</th>
+                                            <td>{{ ('%.2f'|format(metric['current'])) + metric['unit'] if metric['current'] is not none else '未記録' }}</td>
+                                            <td>{{ ('%.2f'|format(metric['baseline'])) + metric['unit'] if metric['baseline'] is not none else '比較なし' }}</td>
+                                            <td>{{ ('%+.2f'|format(metric['delta'])) + metric['unit'] if metric['delta'] is not none else '—' }}</td>
+                                            <td>{{ metric['count'] }}件</td>
+                                        </tr>
+                                    {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                            {% if analysis['history_ids'] %}
+                                <div class="muted">比較したログ（新しい順）:
+                                    {% for history_id in analysis['history_ids'] %}<a href="/edit/{{ history_id }}">#{{ history_id }}</a>{% if not loop.last %} / {% endif %}{% endfor %}
+                                </div>
+                            {% endif %}
+                            <p class="muted">同じカテゴリの完了ログだけを、学習日と同日の登録順で比較します。表示の絞り込みは基準に影響しません。学習時間の長短だけでは良否を判定しません。</p>
+                            <p class="muted">過去との差は記録数に応じて弱め、3件以上で傾向を判定します。テストと自信度の比較は参考換算です。テストの内容・難しさの違いも振り返ってください。</p>
+                        </details>
                     </div>
 
                     <div class="section">
@@ -1136,6 +1174,163 @@ def studylog_plus_get_log(log_id):
     return row
 
 # -----------------------------------------
+# U924: 状態分類・過去ログ比較（DBを書き換えない純粋な計算）
+# -----------------------------------------
+STUDYLOG_ANALYSIS_VERSION = "state-v1"
+STUDYLOG_HISTORY_LIMIT = 5
+STUDYLOG_MIN_HISTORY = 3
+STUDYLOG_CHANGE_THRESHOLD = 1.0
+STUDYLOG_GAP_THRESHOLD = 1.5
+STUDYLOG_ANALYSIS_METRICS = (
+    ("minutes", "学習時間", "分", 1, 2147483647),
+    ("concentration", "集中度", "", 1, 5),
+    ("understanding", "理解度", "", 1, 5),
+    ("confidence", "自信度", "", 1, 5),
+    ("after_test_score", "確認テスト", "点", 0, 100),
+)
+STUDYLOG_SUPPORT_TYPES = {
+    "visualization": "学習状況の可視化",
+    "awareness": "自己認識の促進",
+    "opportunity": "学習機会の提供",
+    "feedback": "個別のフィードバック・介入",
+}
+
+
+def studylog_analysis_number(log, field, minimum, maximum):
+    """未測定・範囲外の旧データを0や3で埋めない。"""
+    raw = log.get(field)
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(value) or not minimum <= value <= maximum:
+        return None
+    if field != "after_test_score" and not value.is_integer():
+        return None
+    return value
+
+
+def studylog_analyze_log(log, history):
+    """同カテゴリの直前5件を受け取る。historyの順序は古い→新しい。"""
+    log = dict(log)
+    completed = log.get("status") == "completed"
+    metrics = []
+    for field, label, unit, minimum, maximum in STUDYLOG_ANALYSIS_METRICS:
+        current = studylog_analysis_number(log, field, minimum, maximum) if completed else None
+        previous = [studylog_analysis_number(row, field, minimum, maximum) for row in history]
+        previous = [value for value in previous if value is not None]
+        count = len(previous)
+        baseline = math.fsum(previous) / count if count else None
+        delta = current - baseline if current is not None and baseline is not None else None
+        # 少数記録の差を弱める。これは確率や統計的な信頼区間ではない。
+        weight = min(count / STUDYLOG_HISTORY_LIMIT, 1)
+        metrics.append({
+            "key": field, "label": label, "unit": unit, "current": current,
+            "baseline": baseline, "delta": delta, "count": count,
+            "weight": weight, "adjusted_delta": delta * weight if delta is not None else None,
+        })
+    by_key = {metric["key"]: metric for metric in metrics}
+    ratings = [by_key[key] for key in ("concentration", "understanding", "confidence")]
+    current_count = sum(metric["current"] is not None for metric in ratings)
+    comparable_count = min(metric["count"] if metric["current"] is not None else 0 for metric in ratings)
+    evidence = ("比較データ充足（各5件）" if comparable_count >= 5 else
+                "比較データ一部あり（各3件以上）" if comparable_count >= STUDYLOG_MIN_HISTORY else
+                "参考判定（比較データが少ない／未測定あり）")
+    result = {
+        "version": STUDYLOG_ANALYSIS_VERSION,
+        "state": "insufficient", "label": "判定保留", "reason": "学習後の集中度・理解度・自信度を記録すると、状態の傾向を確認できます。",
+        "support_type": "visualization", "action": "未記録の評価を入力し、次の学習と比べてみましょう。",
+        "metrics": metrics, "history_ids": [row["id"] for row in reversed(history)],
+        "history_count": len(history), "evidence": evidence, "comparable_count": comparable_count,
+        "gap": None, "gap_basis": None,
+    }
+
+    def choose(state, label, reason, support_type, action):
+        result.update(state=state, label=label, reason=reason, support_type=support_type, action=action)
+
+    def fell(key):
+        metric = by_key[key]
+        return (metric["count"] >= STUDYLOG_MIN_HISTORY and metric["adjusted_delta"] is not None
+                and metric["adjusted_delta"] <= -STUDYLOG_CHANGE_THRESHOLD)
+
+    def rose(key):
+        metric = by_key[key]
+        return (metric["count"] >= STUDYLOG_MIN_HISTORY and metric["adjusted_delta"] is not None
+                and metric["adjusted_delta"] >= STUDYLOG_CHANGE_THRESHOLD)
+
+    def reason_for(key):
+        metric = by_key[key]
+        if metric["current"] is not None and metric["current"] <= 2:
+            return f"今回の{metric['label']}が{metric['current']:g}/5です。"
+        return f"{metric['label']}が過去平均から{metric['delta']:+.2f}（比較{metric['count']}件）変化し、記録数で補正しても低下が見られます。"
+
+    if not completed:
+        choose("pending", "学習後の記録待ち", "学習前だけの記録は状態判定と過去の基準値から除外します。",
+               "visualization", "学習が終わったら、同じログに学習後の結果を保存してください。")
+    else:
+        focus, understanding, confidence = (metric["current"] for metric in ratings)
+        score = by_key["after_test_score"]["current"]
+        # 0〜100点を1〜5へ線形換算した試作上の参考指標。能力の測定尺度ではない。
+        reference = 1 + score / 25 if score is not None else understanding
+        if confidence is not None and reference is not None:
+            result["gap"] = confidence - reference
+            result["gap_basis"] = "確認テスト（1〜5に参考換算）" if score is not None else "理解度の自己評価"
+        if result["gap"] is not None and abs(result["gap"]) >= STUDYLOG_GAP_THRESHOLD:
+            direction = "高め" if result["gap"] > 0 else "低め"
+            choose("calibration", f"自己評価のずれ候補（自信が{direction}）",
+                   f"自信度が{result['gap_basis']}より{abs(result['gap']):.2f}段階{direction}です。",
+                   "awareness", "解けた問題・間違えた問題と自信のつけ方を見比べてみましょう。")
+        elif (understanding is not None and understanding <= 2) or fell("understanding"):
+            choose("understanding", "理解の停滞候補", reason_for("understanding"),
+                   "opportunity", "つまずいた範囲を小さく区切り、例題を1問解いてから理解度を記録しましょう。")
+        elif (focus is not None and focus <= 2) or fell("concentration"):
+            choose("execution", "実行・集中の見直し候補", reason_for("concentration"),
+                   "feedback", "次回は短い学習時間を決め、休憩や学習環境を一つ調整してみましょう。")
+        elif (confidence is not None and confidence <= 2) or fell("confidence"):
+            choose("confidence", "自信の低下候補", reason_for("confidence"),
+                   "awareness", "できたことを一つ書き出し、確認テストや理解度と照らし合わせてみましょう。")
+        elif current_count == 3 and (rose("understanding") or rose("concentration")):
+            choose("improving", "前進傾向", "理解度または集中度に、記録数で補正した過去平均からの上昇が見られます。",
+                   "visualization", "今回うまくいった方法を残し、次回も試して変化を確認しましょう。")
+        elif current_count == 3:
+            choose("stable", "大きな変化なし" if comparable_count >= STUDYLOG_MIN_HISTORY else "今回の評価は中程度以上（暫定）",
+                   "今回の3評価はすべて3以上です。比較データがある項目では、大きな低下の条件に当てはまりません。",
+                   "visualization", "今の学習方法で記録を続け、同じカテゴリの過去ログと比べてみましょう。")
+    result["support_label"] = STUDYLOG_SUPPORT_TYPES[result["support_type"]]
+    return result
+
+
+def studylog_analyze_logs(logs):
+    """表示フィルタに依存せず、学習日・ID順に1回走査する（追加DB照会なし）。"""
+    results = {}
+    history_by_category = defaultdict(lambda: deque(maxlen=STUDYLOG_HISTORY_LIMIT))
+    rows = [dict(row) for row in logs]
+    valid_rows = []
+    for row in rows:
+        try:
+            value = row.get("study_date")
+            valid_date = isinstance(value, str) and date.fromisoformat(value).isoformat() == value
+        except ValueError:
+            valid_date = False
+        if valid_date:
+            valid_rows.append(row)
+        else:
+            analysis = studylog_analyze_log(row, [])
+            analysis.update(state="insufficient", label="判定保留", reason="学習日を確認して保存し直すと、過去ログと比較できます。",
+                            support_type="visualization", support_label=STUDYLOG_SUPPORT_TYPES["visualization"],
+                            action="学習日を正しい日付に直して保存してください。")
+            results[row["id"]] = analysis
+    for row in sorted(valid_rows, key=lambda item: (item["study_date"], item["id"])):
+        category = (row.get("category") or "").strip()
+        history = history_by_category[category]
+        results[row["id"]] = studylog_analyze_log(row, list(history))
+        if row.get("status") == "completed":
+            history.append(row)
+    return results
+
+# -----------------------------------------
 # U913: 追加処理本体
 # -----------------------------------------
 STUDYLOG_PLUS_STUMBLE_OPTIONS = [
@@ -1261,13 +1456,16 @@ def studylog_plus_delete_db(log_id):
 # -----------------------------------------
 def studylog_plus_index(form_data=None, error=None):
     where_sql, params, filters = studylog_plus_build_filters()
-    logs = studylog_plus_get_logs(where_sql, params)
+    all_logs = studylog_plus_get_logs()
+    logs = studylog_plus_get_logs(where_sql, params) if where_sql else all_logs
+    analyses = studylog_analyze_logs(all_logs)
     summary = studylog_plus_get_summary(where_sql, params)
     categories = studylog_plus_get_categories()
 
     return render_template_string(
         STUDYLOG_PLUS_INDEX_HTML,
         logs=logs,
+        analyses=analyses,
         summary=summary,
         categories=categories,
         filters=filters,
