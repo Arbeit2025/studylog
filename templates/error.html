@@ -11,6 +11,7 @@
 <body><main class="wrap"><div class="card">
     <h1>処理を確認してください</h1>
     <p role="alert">{{ message }}</p>
+    {% if admin_login_required %}<a class="btn-link" href="{{ url_for('studylog_admin_login') }}">管理者ログインへ</a>{% endif %}
     <a class="btn-link" href="{{ url_for('index') }}">一覧へ戻る</a>
 </div></main></body>
 </html>

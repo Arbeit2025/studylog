@@ -14,7 +14,7 @@
         <h1 class="no-margin">studylog</h1>
         <div class="header-actions">
             {% include 'theme_control.html' %}
-            <a class="btn-link" href="{{ url_for('studylog_backup') }}">バックアップ</a>
+            {% include 'admin_control.html' %}
             <button type="submit" form="studylog-lock" class="auto-width">ロック</button>
         </div>
     </div>
