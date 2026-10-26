@@ -51,6 +51,101 @@ app.config.update(
 )
 
 
+# 全画面共通のテーマ。描画前に適用し、端末内の設定だけを保存する。
+STUDYLOG_THEME_HEAD = """
+<script>
+(function () {
+    'use strict';
+    var storageKey = 'studylog-theme';
+    var root = document.documentElement;
+    var media = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+    var preference = 'system';
+
+    function valid(value) {
+        return value === 'light' || value === 'dark' ? value : 'system';
+    }
+    function apply() {
+        root.dataset.theme = preference === 'system' ? (media && media.matches ? 'dark' : 'light') : preference;
+        root.dataset.themePreference = preference;
+        document.querySelectorAll('[data-studylog-theme]').forEach(function (control) {
+            control.value = preference;
+        });
+    }
+    try { preference = valid(window.localStorage.getItem(storageKey)); } catch (error) {}
+    apply();
+
+    function bind() {
+        document.querySelectorAll('[data-studylog-theme]').forEach(function (control) {
+            control.addEventListener('change', function () {
+                preference = valid(control.value);
+                try { window.localStorage.setItem(storageKey, preference); } catch (error) {}
+                apply();
+            });
+        });
+        apply();
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind);
+    else bind();
+    if (media) {
+        if (media.addEventListener) media.addEventListener('change', apply);
+        else if (media.addListener) media.addListener(apply);
+    }
+    window.addEventListener('storage', function (event) {
+        if (event.key === storageKey || event.key === null) {
+            preference = valid(event.newValue);
+            apply();
+        }
+    });
+    window.addEventListener('pageshow', apply);
+}());
+</script>
+<style>
+    :root {
+        color-scheme:light;
+        --page-bg:#f6f7fb;--surface:#fff;--text:#222;--muted:#5d6472;
+        --border:#d7dbea;--border-soft:#e5e7eb;--summary-bg:#f8f9ff;
+        --pill-bg:#eef2ff;--pill-text:#334155;
+        --button-bg:#222;--button-alt-bg:#111827;--button-text:#fff;
+        --danger-bg:#b91c1c;--danger-text:#991b1b;--error-bg:#fef2f2;
+        --link:#374151;--focus:#6366f1;--shadow:0 8px 24px rgba(0,0,0,.06);
+    }
+    :root[data-theme="dark"] {
+        color-scheme:dark;
+        --page-bg:#111827;--surface:#1f2937;--text:#f3f4f6;--muted:#b6c0ce;
+        --border:#64748b;--border-soft:#475569;--summary-bg:#273449;
+        --pill-bg:#343f63;--pill-text:#e0e7ff;
+        --button-bg:#c7d2fe;--button-alt-bg:#c7d2fe;--button-text:#172033;
+        --danger-bg:#b91c1c;--danger-text:#fecdd3;--error-bg:#4c1d2a;
+        --link:#c7d2fe;--focus:#a5b4fc;--shadow:0 8px 24px rgba(0,0,0,.22);
+    }
+    input,select,textarea {background:var(--surface);color:var(--text);}
+    input::placeholder,textarea::placeholder {color:var(--muted);opacity:1;}
+    a:not(.btn-link) {color:var(--link);}
+    .danger {color:#fff;}
+    :focus-visible {outline:2px solid var(--focus);outline-offset:3px;}
+    .page-header {display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;
+        gap:16px;margin-bottom:18px;}
+    .header-actions {display:flex;align-items:center;flex-wrap:wrap;gap:10px;max-width:100%;}
+    .theme-control {display:flex;align-items:center;gap:8px;max-width:100%;}
+    .theme-control label {margin:0;white-space:nowrap;font-size:13px;color:var(--muted);}
+    .theme-control select {width:auto;max-width:100%;min-height:44px;padding:8px 10px;
+        font-size:14px;letter-spacing:normal;border:1px solid var(--border);border-radius:12px;}
+    .login-theme {display:flex;justify-content:flex-end;margin-bottom:24px;}
+</style>
+"""
+
+STUDYLOG_THEME_CONTROL = """
+<div class="theme-control">
+    <label for="studylog-theme">テーマ</label>
+    <select id="studylog-theme" data-studylog-theme>
+        <option value="system">端末に合わせる</option>
+        <option value="light">ライト</option>
+        <option value="dark">ダーク</option>
+    </select>
+</div>
+"""
+
+
 # 4桁PINは公開ソースに保存せず、サーバーの環境変数から読む。
 STUDYLOG_LOGIN_HTML = """
 <!doctype html>
@@ -63,21 +158,23 @@ STUDYLOG_LOGIN_HTML = """
         *{box-sizing:border-box;}
         body{margin:0;padding:24px;min-height:100svh;display:grid;place-items:center;
             font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Yu Gothic",sans-serif;
-            background:#f6f7fb;color:#222;}
-        main{width:100%;max-width:380px;background:#fff;border-radius:20px;padding:32px 24px;
-            box-shadow:0 8px 24px rgba(0,0,0,.06);}
+            background:var(--page-bg);color:var(--text);}
+        main{width:100%;max-width:380px;background:var(--surface);border-radius:20px;padding:32px 24px;
+            box-shadow:var(--shadow);}
         h1{margin:0 0 10px;font-size:28px;}
-        p{font-size:14px;line-height:1.8;color:#555;}
+        p{font-size:14px;line-height:1.8;color:var(--muted);}
         label{display:block;font-size:14px;font-weight:700;margin:24px 0 8px;}
         input,button{width:100%;border-radius:12px;padding:14px;font-size:18px;}
-        input{border:1px solid #d7dbea;text-align:center;letter-spacing:.45em;}
-        input:focus{outline:2px solid #6366f1;outline-offset:2px;}
-        button{margin-top:18px;border:0;background:#222;color:white;font-weight:700;cursor:pointer;}
-        .error{color:#b91c1c;background:#fff1f2;border-radius:10px;padding:12px;}
+        input{border:1px solid var(--border);text-align:center;letter-spacing:.45em;}
+        input:focus{outline:2px solid var(--focus);outline-offset:2px;}
+        button{margin-top:18px;border:0;background:var(--button-bg);color:var(--button-text);font-weight:700;cursor:pointer;}
+        .error{color:var(--danger-text);background:var(--error-bg);border-radius:10px;padding:12px;}
     </style>
+{{ studylog_theme_head|safe }}
 </head>
 <body>
 <main>
+    <div class="login-theme">{{ studylog_theme_control|safe }}</div>
     <h1>studylog</h1>
     <p>4桁の暗証番号を入力して、学習の記録を開きます。</p>
     {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
@@ -140,7 +237,9 @@ def studylog_csrf_token():
 
 @app.context_processor
 def studylog_auth_context():
-    return {"studylog_csrf_token": studylog_csrf_token}
+    return {"studylog_csrf_token": studylog_csrf_token,
+            "studylog_theme_head": STUDYLOG_THEME_HEAD,
+            "studylog_theme_control": STUDYLOG_THEME_CONTROL}
 
 
 @app.before_request
@@ -243,12 +342,12 @@ HTML_TEMPLATE = """
     <style>
         body{
             font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Yu Gothic",sans-serif;
-            background:#f6f7fb;color:#222;margin:0;padding:24px;
+            background:var(--page-bg);color:var(--text);margin:0;padding:24px;
         }
         .wrap{max-width:1100px;margin:0 auto;}
         .card{
-            background:#fff;border-radius:18px;padding:18px;margin-bottom:18px;
-            box-shadow:0 8px 24px rgba(0,0,0,0.06);
+            background:var(--surface);border-radius:18px;padding:18px;margin-bottom:18px;
+            box-shadow:var(--shadow);
         }
         h1{margin:0 0 18px 0;font-size:30px;}
         h2{margin:0 0 14px 0;font-size:22px;}
@@ -259,35 +358,36 @@ HTML_TEMPLATE = """
         .grid-4{grid-template-columns:1fr 1fr 1fr 1fr;}
         label{display:block;font-size:14px;font-weight:700;margin-bottom:6px;}
         input,select,textarea,button{
-            width:100%;box-sizing:border-box;border:1px solid #d7dbea;
-            border-radius:12px;padding:10px 12px;font-size:14px;background:#fff;
+            width:100%;box-sizing:border-box;border:1px solid var(--border);
+            border-radius:12px;padding:10px 12px;font-size:14px;background:var(--surface);
         }
         textarea{min-height:90px;resize:vertical;}
-        button{border:none;background:#222;color:#fff;font-weight:700;cursor:pointer;}
-        .danger{background:#b91c1c;}
+        button{border:none;background:var(--button-bg);color:var(--button-text);font-weight:700;cursor:pointer;}
+        .danger{background:var(--danger-bg);}
         .pill{
-            display:inline-block;background:#eef2ff;color:#334155;
+            display:inline-block;background:var(--pill-bg);color:var(--pill-text);
             padding:6px 10px;border-radius:999px;font-size:12px;font-weight:700;
             margin:0 6px 6px 0;
         }
         .summary{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;}
-        .summary-box{background:#f8f9ff;border-radius:14px;padding:14px;}
-        .summary-label{font-size:12px;color:#666;margin-bottom:6px;}
+        .summary-box{background:var(--summary-bg);border-radius:14px;padding:14px;}
+        .summary-label{font-size:12px;color:var(--muted);margin-bottom:6px;}
         .summary-value{font-size:24px;font-weight:800;}
-        .log{border:1px solid #e8ebf4;border-radius:16px;padding:16px;margin-bottom:14px;}
-        .section{margin-top:12px;padding-top:12px;border-top:1px dashed #e5e7eb;}
-        .muted{color:#666;font-size:13px;white-space:pre-wrap;}
+        .log{border:1px solid var(--border-soft);border-radius:16px;padding:16px;margin-bottom:14px;}
+        .section{margin-top:12px;padding-top:12px;border-top:1px dashed var(--border-soft);}
+        .muted{color:var(--muted);font-size:13px;white-space:pre-wrap;}
         .actions{display:flex;gap:10px;align-items:center;margin-top:14px;flex-wrap:wrap;}
         .btn-link{
-            display:inline-block;text-decoration:none;background:#111827;color:#fff;
+            display:inline-block;text-decoration:none;background:var(--button-alt-bg);color:var(--button-text);
             padding:10px 14px;border-radius:12px;font-size:14px;font-weight:700;
         }
         .inline{display:flex;gap:10px;align-items:center;flex-wrap:wrap;}
-        .empty{color:#666;padding:10px 0 4px 0;}
+        .empty{color:var(--muted);padding:10px 0 4px 0;}
         @media (max-width:900px){
             .grid-2,.grid-3,.grid-4,.summary{grid-template-columns:1fr;}
         }
     </style>
+{{ studylog_theme_head|safe }}
 </head>
 <body>
 <div class="wrap">
@@ -752,10 +852,10 @@ STUDYLOG_PLUS_FORM_HTML = """
     </div>
 {%- endmacro %}
 {% if error %}
-    <p role="alert" style="color:#991b1b;background:#fef2f2;padding:12px;border-radius:12px;">{{ error }}</p>
+    <p role="alert" style="color:var(--danger-text);background:var(--error-bg);padding:12px;border-radius:12px;">{{ error }}</p>
 {% endif %}
 {% if plan_notice %}
-    <p role="status" style="background:#eef2ff;padding:12px;border-radius:12px;">{{ plan_notice }} 内容を調整し、「学習前を保存」で新しい記録として保存できます。</p>
+    <p role="status" style="background:var(--pill-bg);padding:12px;border-radius:12px;">{{ plan_notice }} 内容を調整し、「学習前を保存」で新しい記録として保存できます。</p>
 {% endif %}
 <p class="muted">学習前だけでも保存できます。一覧の「学習後を記録」から、同じログに結果を追記できます。</p>
 {% if is_edit %}
@@ -872,12 +972,12 @@ STUDYLOG_PLUS_INDEX_HTML = """
     <style>
         body{
             font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Yu Gothic",sans-serif;
-            background:#f6f7fb;color:#222;margin:0;padding:24px;
+            background:var(--page-bg);color:var(--text);margin:0;padding:24px;
         }
         .wrap{max-width:1100px;margin:0 auto;}
         .card{
-            background:#fff;border-radius:18px;padding:18px;margin-bottom:18px;
-            box-shadow:0 8px 24px rgba(0,0,0,0.06);
+            background:var(--surface);border-radius:18px;padding:18px;margin-bottom:18px;
+            box-shadow:var(--shadow);
         }
         h1{margin:0 0 18px 0;font-size:30px;}
         h2{margin:0 0 14px 0;font-size:22px;}
@@ -892,16 +992,16 @@ STUDYLOG_PLUS_INDEX_HTML = """
             display:block;font-size:14px;font-weight:700;margin-bottom:6px;
         }
         input,select,textarea,button{
-            width:100%;box-sizing:border-box;border:1px solid #d7dbea;
-            border-radius:12px;padding:10px 12px;font-size:14px;background:#fff;
+            width:100%;box-sizing:border-box;border:1px solid var(--border);
+            border-radius:12px;padding:10px 12px;font-size:14px;background:var(--surface);
         }
         textarea{min-height:90px;resize:vertical;}
         button{
-            border:none;background:#222;color:#fff;font-weight:700;cursor:pointer;
+            border:none;background:var(--button-bg);color:var(--button-text);font-weight:700;cursor:pointer;
         }
-        .danger{background:#b91c1c;}
+        .danger{background:var(--danger-bg);}
         .pill{
-            display:inline-block;background:#eef2ff;color:#334155;
+            display:inline-block;background:var(--pill-bg);color:var(--pill-text);
             padding:6px 10px;border-radius:999px;font-size:12px;font-weight:700;
             margin:0 6px 6px 0;
         }
@@ -909,34 +1009,38 @@ STUDYLOG_PLUS_INDEX_HTML = """
             display:grid;grid-template-columns:repeat(4,1fr);gap:12px;
         }
         .summary-box{
-            background:#f8f9ff;border-radius:14px;padding:14px;
+            background:var(--summary-bg);border-radius:14px;padding:14px;
         }
-        .summary-label{font-size:12px;color:#666;margin-bottom:6px;}
+        .summary-label{font-size:12px;color:var(--muted);margin-bottom:6px;}
         .summary-value{font-size:24px;font-weight:800;}
         .log{
-            border:1px solid #e8ebf4;border-radius:16px;padding:16px;margin-bottom:14px;
+            border:1px solid var(--border-soft);border-radius:16px;padding:16px;margin-bottom:14px;
         }
         .section{
-            margin-top:12px;padding-top:12px;border-top:1px dashed #e5e7eb;
+            margin-top:12px;padding-top:12px;border-top:1px dashed var(--border-soft);
         }
-        .muted{color:#666;font-size:13px;white-space:pre-wrap;}
+        .muted{color:var(--muted);font-size:13px;white-space:pre-wrap;}
         .actions{display:flex;gap:10px;align-items:center;margin-top:14px;flex-wrap:wrap;}
         .btn-link{
-            display:inline-block;text-decoration:none;background:#111827;color:#fff;
+            display:inline-block;text-decoration:none;background:var(--button-alt-bg);color:var(--button-text);
             padding:10px 14px;border-radius:12px;font-size:14px;font-weight:700;
         }
         .inline{display:flex;gap:10px;align-items:center;flex-wrap:wrap;}
-        .empty{color:#666;padding:10px 0 4px 0;}
+        .empty{color:var(--muted);padding:10px 0 4px 0;}
         @media (max-width:900px){
             .grid-2,.grid-3,.grid-4,.summary{grid-template-columns:1fr;}
         }
     </style>
+{{ studylog_theme_head|safe }}
 </head>
 <body>
 <div class="wrap">
-    <div style="display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:18px;">
+    <div class="page-header">
         <h1 style="margin:0;">studylog</h1>
-        <button type="submit" form="studylog-lock" style="width:auto;">ロック</button>
+        <div class="header-actions">
+            {{ studylog_theme_control|safe }}
+            <button type="submit" form="studylog-lock" style="width:auto;">ロック</button>
+        </div>
     </div>
 
     <div class="card" id="studylog-add">
@@ -1216,12 +1320,12 @@ STUDYLOG_PLUS_EDIT_HTML = """
     <style>
         body{
             font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Yu Gothic",sans-serif;
-            background:#f6f7fb;color:#222;margin:0;padding:24px;
+            background:var(--page-bg);color:var(--text);margin:0;padding:24px;
         }
         .wrap{max-width:900px;margin:0 auto;}
         .card{
-            background:#fff;border-radius:18px;padding:18px;
-            box-shadow:0 8px 24px rgba(0,0,0,0.06);
+            background:var(--surface);border-radius:18px;padding:18px;
+            box-shadow:var(--shadow);
         }
         h1{margin:0 0 18px 0;}
         h3{margin:0 0 10px 0;}
@@ -1230,23 +1334,27 @@ STUDYLOG_PLUS_EDIT_HTML = """
         .grid-3{grid-template-columns:1fr 1fr 1fr;}
         label{display:block;font-size:14px;font-weight:700;margin-bottom:6px;}
         input,select,textarea,button{
-            width:100%;box-sizing:border-box;border:1px solid #d7dbea;
-            border-radius:12px;padding:10px 12px;font-size:14px;background:#fff;
+            width:100%;box-sizing:border-box;border:1px solid var(--border);
+            border-radius:12px;padding:10px 12px;font-size:14px;background:var(--surface);
         }
         textarea{min-height:90px;resize:vertical;}
-        button{border:none;background:#222;color:#fff;font-weight:700;cursor:pointer;}
-        .section{margin-top:16px;padding-top:14px;border-top:1px dashed #e5e7eb;}
-        .back{display:inline-block;margin-top:14px;color:#374151;text-decoration:none;font-weight:700;}
-        .muted{color:#666;font-size:13px;white-space:pre-wrap;}
+        button{border:none;background:var(--button-bg);color:var(--button-text);font-weight:700;cursor:pointer;}
+        .section{margin-top:16px;padding-top:14px;border-top:1px dashed var(--border-soft);}
+        .back{display:inline-block;margin-top:14px;color:var(--link);text-decoration:none;font-weight:700;}
+        .muted{color:var(--muted);font-size:13px;white-space:pre-wrap;}
         @media (max-width:900px){.grid-2,.grid-3{grid-template-columns:1fr;}}
     </style>
+{{ studylog_theme_head|safe }}
 </head>
 <body>
 <div class="wrap">
     <div class="card">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:18px;">
+        <div class="page-header">
             <h1 style="margin:0;">ログを編集</h1>
-            <button type="submit" form="studylog-lock" style="width:auto;">ロック</button>
+            <div class="header-actions">
+                {{ studylog_theme_control|safe }}
+                <button type="submit" form="studylog-lock" style="width:auto;">ロック</button>
+            </div>
         </div>
 
 """ + STUDYLOG_PLUS_FORM_HTML + """
