@@ -27,12 +27,14 @@
 from flask import Flask, request, redirect, url_for, render_template_string, session
 import hashlib
 import hmac
+import json
 import math
 import os
 import secrets
 import sqlite3
 import time
 from pathlib import Path
+from itsdangerous import BadData, URLSafeSerializer
 
 
 # =========================================
@@ -761,6 +763,12 @@ STUDYLOG_PLUS_FORM_HTML = """
 {% endif %}
 <form method="post" action="{{ form_action }}">
     <input type="hidden" name="csrf_token" value="{{ studylog_csrf_token() }}">
+    {% if not is_edit and form_data.get('plan_token') %}
+        <input type="hidden" name="plan_token" value="{{ field_value('plan_token') }}">
+        <p class="muted">この計画を保存すると、採用時の提案・比較元と学習後の結果を継続評価できます。時間・目標・方法は編集できます。</p>
+    {% elif is_edit and form_data.get('plan_tracking') %}
+        <p class="muted">補正計画から作成した記録です。採用時の提案と比較基準は保持されます。</p>
+    {% endif %}
     <div class="grid-2">
         <div>
             <label for="study_date">学習日</label>
@@ -998,6 +1006,30 @@ STUDYLOG_PLUS_INDEX_HTML = """
         </div>
     </div>
 
+    <div class="card" id="plan-effects">
+        <h2>補正効果の継続評価</h2>
+        <p class="muted">表示中のログを集計：補正計画から保存 {{ effect_summary['total'] }}件 / 比較可能 {{ effect_summary['evaluated'] }}件 / 学習後待ち {{ effect_summary['waiting'] }}件 / 比較保留 {{ effect_summary['excluded'] }}件。</p>
+        <p class="muted">計画を引き継いで保存すると、採用時の比較元からの変化を追えます。カテゴリごとに集計し、未入力は比較数に含めません。補正が変化の原因だと確定する評価ではありません。確認テストは同じ内容・難しさかも振り返ってください。</p>
+        {% for group in effect_summary['groups'] %}
+            <details style="margin-top:14px;" open>
+                <summary>{{ group['category'] or 'カテゴリ未設定' }}：比較可能 {{ group['evaluated'] }}件</summary>
+                <div style="overflow-x:auto;">
+                    <table style="width:100%;min-width:340px;text-align:left;border-spacing:8px;">
+                        <caption>採用時の比較元との差の平均</caption>
+                        <thead><tr><th scope="col">項目</th><th scope="col">平均の差</th><th scope="col">比較数</th></tr></thead>
+                        <tbody>{% for metric in group['metrics'] %}
+                            <tr><th scope="row">{{ metric['label'] }}</th><td>{{ ('%+.2f'|format(metric['mean'])) + metric['unit'] if metric['mean'] is not none else '比較なし' }}</td><td>{{ metric['count'] }}件</td></tr>
+                        {% endfor %}</tbody>
+                    </table>
+                </div>
+                <p class="muted">直近5件までの推移（学習日・登録順、新しい順）：</p>
+                <ul>{% for item in group['recent'] %}<li><a href="/edit/{{ item['id'] }}">{{ item['study_date'] }} #{{ item['id'] }}</a>：{{ item['label'] }}</li>{% endfor %}</ul>
+            </details>
+        {% else %}
+            <p class="muted">まだ比較できる補正計画の結果がありません。各ログの「この計画で次の学習を準備」から始められます。</p>
+        {% endfor %}
+    </div>
+
     <div class="card">
         <h2>ログ一覧</h2>
 
@@ -1086,6 +1118,36 @@ STUDYLOG_PLUS_INDEX_HTML = """
                             <p class="muted">{{ plan['reason'] }}</p>
                         {% endif %}
                     </div>
+
+                    {% set effect = effects[log['id']] %}
+                    {% if effect['tracked'] %}
+                    <div class="section plan-effect" data-log-id="{{ log['id'] }}" data-effect-state="{{ effect['state'] }}">
+                        <h3>この補正計画の評価</h3>
+                        <strong>{{ effect['label'] }}</strong>
+                        <p class="muted">{{ effect['reason'] }}</p>
+                        {% if effect.get('tracking') %}
+                            {% set tracking = effect['tracking'] %}
+                            <details>
+                                <summary>採用時の計画と比較元</summary>
+                                <p class="muted">元ログ #{{ tracking['source_id'] }}（{{ tracking['source_date'] }}）。採用日時 {{ tracking['adopted_at'] }}。提案方式 {{ tracking['plan']['version'] }}。</p>
+                                <p class="muted">提案：{{ tracking['plan']['minutes'] }}分（基準 {{ tracking['plan']['base_minutes'] }}分） / 目標：{{ tracking['plan']['goal'] }} / 方法：{{ tracking['plan']['strategy'] }}</p>
+                                <p class="muted">保存した計画：{{ tracking['adopted_plan']['planned_minutes'] if tracking['adopted_plan']['planned_minutes'] is not none else '未入力' }}分 / 目標：{{ tracking['adopted_plan']['goal'] }} / 方法：{{ tracking['adopted_plan']['strategy'] }}</p>
+                                <p class="muted">{{ effect['adoption_label'] }}。比較元は採用時の値を保持し、元ログの編集・削除では変わりません。{{ tracking['plan']['reason'] }}</p>
+                            </details>
+                        {% endif %}
+                        {% if effect['metrics'] %}
+                            <div style="overflow-x:auto;">
+                                <table style="width:100%;min-width:420px;text-align:left;border-spacing:8px;">
+                                    <caption>採用時の比較元と今回の結果</caption>
+                                    <thead><tr><th scope="col">項目</th><th scope="col">比較元</th><th scope="col">今回</th><th scope="col">差</th><th scope="col">今回の学習前後差</th></tr></thead>
+                                    <tbody>{% for metric in effect['metrics'] %}
+                                        <tr><th scope="row">{{ metric['label'] }}</th><td>{{ ('%g'|format(metric['baseline'])) + metric['unit'] if metric['baseline'] is not none else '未記録' }}</td><td>{{ ('%g'|format(metric['current'])) + metric['unit'] if metric['current'] is not none else '未記録' }}</td><td>{{ ('%+g'|format(metric['delta'])) + metric['unit'] if metric['delta'] is not none else '比較なし' }}</td><td>{{ ('%+g'|format(metric['gain'])) + metric['unit'] if metric['gain'] is not none else '比較なし' }}</td></tr>
+                                    {% endfor %}</tbody>
+                                </table>
+                            </div>
+                        {% endif %}
+                    </div>
+                    {% endif %}
 
                     <div class="section">
                         <strong>学習前 → 学習後</strong>
@@ -1249,7 +1311,8 @@ def studylog_plus_add_missing_columns():
         "status": "TEXT NOT NULL DEFAULT 'completed'",
         "before_saved_at": "TEXT",
         "after_saved_at": "TEXT",
-        "updated_at": "TEXT"
+        "updated_at": "TEXT",
+        "plan_tracking": "TEXT"
     }
 
     for col_name, col_type in needed.items():
@@ -1425,7 +1488,7 @@ def studylog_analysis_number(log, field, minimum, maximum):
         return None
     if not math.isfinite(value) or not minimum <= value <= maximum:
         return None
-    if field != "after_test_score" and not value.is_integer():
+    if field not in ("before_test_score", "after_test_score") and not value.is_integer():
         return None
     return value
 
@@ -1618,6 +1681,171 @@ def studylog_build_next_plan(log, analysis):
                   factor=factor, history_ids=list(analysis["history_ids"]))
     return result
 
+
+STUDYLOG_EFFECT_VERSION = "effect-v1"
+STUDYLOG_EFFECT_METRICS = tuple(metric for metric in STUDYLOG_ANALYSIS_METRICS if metric[0] != "minutes")
+
+
+def studylog_plan_serializer():
+    return URLSafeSerializer(app.secret_key, salt="studylog-plan-adoption-v1")
+
+
+def studylog_plan_token(log, plan, analysis):
+    """プレビューした提案と比較元を署名し、保存時まで保持する。GETはDBを変更しない。"""
+    log = dict(log)
+    snapshot = {
+        "version": STUDYLOG_EFFECT_VERSION,
+        "source_id": log["id"], "source_date": log["study_date"],
+        "category": plan["category"], "source_state": analysis["state"],
+        "plan": {key: plan[key] for key in ("version", "minutes", "base_minutes", "goal", "strategy", "reason")},
+        "source_results": {field: studylog_analysis_number(log, field, low, high)
+                           for field, _, _, low, high in STUDYLOG_EFFECT_METRICS},
+    }
+    return studylog_plan_serializer().dumps(snapshot)
+
+
+def studylog_valid_tracking(value, saved=False):
+    """壊れた旧値や将来版を効果として誤集計しない。"""
+    if not isinstance(value, dict) or value.get("version") != STUDYLOG_EFFECT_VERSION:
+        return False
+    if type(value.get("source_id")) is not int or not 0 < value["source_id"] <= 2147483647:
+        return False
+    try:
+        valid_date = isinstance(value.get("source_date"), str) and date.fromisoformat(value["source_date"]).isoformat() == value["source_date"]
+    except ValueError:
+        valid_date = False
+    if not valid_date or not isinstance(value.get("category"), str):
+        return False
+    plan = value.get("plan")
+    if not isinstance(plan, dict) or not isinstance(value.get("source_results"), dict):
+        return False
+    if not all(isinstance(plan.get(key), str) for key in ("version", "goal", "strategy", "reason")):
+        return False
+    if any(type(plan.get(key)) is not int or plan[key] < 1 for key in ("minutes", "base_minutes")):
+        return False
+    if saved:
+        adopted = value.get("adopted_plan")
+        if not isinstance(value.get("adopted_at"), str) or not isinstance(adopted, dict):
+            return False
+        if not all(isinstance(adopted.get(key), str) for key in ("goal", "strategy")):
+            return False
+        if "planned_minutes" not in adopted:
+            return False
+        if adopted.get("planned_minutes") is not None and (type(adopted["planned_minutes"]) is not int or adopted["planned_minutes"] < 1):
+            return False
+    return True
+
+
+def studylog_adopt_plan(form, values, conn):
+    token = form.get("plan_token")
+    if not token:
+        return None
+    try:
+        if not isinstance(token, str) or len(token) > 65536:
+            raise ValueError
+        snapshot = studylog_plan_serializer().loads(token)
+        if not studylog_valid_tracking(snapshot):
+            raise ValueError
+    except (BadData, ValueError, TypeError):
+        raise ValueError("引き継いだ計画を確認できません。元のログからもう一度準備してください。") from None
+    source = conn.execute("SELECT id FROM logs WHERE id = ?", (snapshot["source_id"],)).fetchone()
+    if source is None:
+        raise ValueError("比較元のログが削除されています。別のログから計画を準備してください。")
+    snapshot["adopted_at"] = values["updated_at"]
+    snapshot["adopted_plan"] = {key: values[key] for key in ("planned_minutes", "goal", "strategy")}
+    return json.dumps(snapshot, ensure_ascii=False, allow_nan=False)
+
+
+def studylog_evaluate_plan(log):
+    """採用時の比較元との差を示す。時間の長短や因果効果を成功と見なさない。"""
+    log = dict(log)
+    raw = log.get("plan_tracking")
+    result = {"tracked": bool(raw), "state": "untracked", "label": "補正計画の記録なし",
+              "reason": "", "metrics": []}
+    if not raw:
+        return result
+    result.update(state="excluded", label="比較保留", reason="採用時の情報を確認できません。")
+    try:
+        tracking = json.loads(raw)
+    except (ValueError, TypeError):
+        return result
+    if not studylog_valid_tracking(tracking, saved=True):
+        return result
+    plan, adopted = tracking["plan"], tracking["adopted_plan"]
+    edited = any(adopted[key] != plan["minutes" if key == "planned_minutes" else key]
+                 for key in ("planned_minutes", "goal", "strategy"))
+    changed = any(log.get(key) != adopted[key] for key in ("planned_minutes", "goal", "strategy"))
+    result.update(tracking=tracking, adoption_label="提案を編集して採用" if edited else "提案どおりに採用")
+    if changed:
+        result["adoption_label"] += "・採用後にも計画を編集"
+    try:
+        current_date = log.get("study_date")
+        valid_date = isinstance(current_date, str) and date.fromisoformat(current_date).isoformat() == current_date
+    except ValueError:
+        valid_date = False
+    if not valid_date or current_date < tracking["source_date"] or log.get("id", 0) <= tracking["source_id"]:
+        result["reason"] = "学習日または記録の順序が比較元より前のため、継続評価を保留しています。"
+        return result
+    if (log.get("category") or "").strip() != tracking["category"]:
+        result["reason"] = "採用時とカテゴリが異なるため、異なる学習の結果を混ぜずに比較を保留しています。"
+        return result
+    if log.get("status") != "completed":
+        result.update(state="waiting", label="学習後の結果待ち", reason="同じ記録に学習後の結果を保存すると評価します。")
+        return result
+    metrics = []
+    for field, label, unit, low, high in STUDYLOG_EFFECT_METRICS:
+        current = studylog_analysis_number(log, field, low, high)
+        baseline = studylog_analysis_number(tracking["source_results"], field, low, high)
+        before_field = {"understanding": "before_understanding", "confidence": "before_confidence",
+                        "after_test_score": "before_test_score"}.get(field)
+        before = studylog_analysis_number(log, before_field, low, high) if before_field else None
+        metrics.append({"key": field, "label": label, "unit": unit, "current": current, "baseline": baseline,
+                        "delta": current - baseline if current is not None and baseline is not None else None,
+                        "gain": current - before if current is not None and before is not None else None})
+    result["metrics"] = metrics
+    deltas = [metric["delta"] for metric in metrics if metric["delta"] is not None]
+    if not deltas:
+        result["reason"] = "今回と比較元の両方にある評価・得点がないため、比較を保留しています。"
+        return result
+    up, down = any(delta > 0 for delta in deltas), any(delta < 0 for delta in deltas)
+    label = "上昇・低下が混在" if up and down else "比較値が上昇" if up else "比較値が低下" if down else "比較値に変化なし"
+    result.update(state="evaluated", label=label,
+                  reason=f"採用時の比較元と{len(deltas)}項目で比較しています。記録上の変化であり、補正による因果効果や統計的な有意差を示すものではありません。")
+    return result
+
+
+def studylog_summarize_effects(logs, effects):
+    """表示中の対象をカテゴリ別・項目別件数で集計。再編集で件数を重複させない。"""
+    summary = {"total": 0, "evaluated": 0, "waiting": 0, "excluded": 0, "groups": []}
+    groups = {}
+    for row in logs:
+        effect = effects[row["id"]]
+        if not effect["tracked"]:
+            continue
+        summary["total"] += 1
+        summary[effect["state"]] += 1
+        if effect["state"] != "evaluated":
+            continue
+        category = effect["tracking"]["category"]
+        if category not in groups:
+            groups[category] = {"category": category, "evaluated": 0, "recent": [],
+                                "values": {field: [] for field, *_ in STUDYLOG_EFFECT_METRICS}}
+        group = groups[category]
+        group["evaluated"] += 1
+        group["recent"].append({"id": row["id"], "study_date": row["study_date"], "label": effect["label"]})
+        for metric in effect["metrics"]:
+            if metric["delta"] is not None:
+                group["values"][metric["key"]].append(metric["delta"])
+    for category in sorted(groups):
+        group = groups[category]
+        group["metrics"] = [{"key": field, "label": label, "unit": unit, "count": len(group["values"][field]),
+                              "mean": sum(group["values"][field]) / len(group["values"][field]) if group["values"][field] else None}
+                             for field, label, unit, *_ in STUDYLOG_EFFECT_METRICS]
+        group.pop("values")
+        group["recent"] = sorted(group["recent"], key=lambda item: (item["study_date"], item["id"]), reverse=True)[:5]
+        summary["groups"].append(group)
+    return summary
+
 # -----------------------------------------
 # U913: 追加処理本体
 # -----------------------------------------
@@ -1706,10 +1934,12 @@ def studylog_plus_form_data(form, existing=None):
 def studylog_plus_insert(form):
     values = studylog_plus_form_data(form)
     values["created_at"] = values["updated_at"]
-    # カラム名は上の固定辞書からのみ取得し、入力値はプレースホルダで渡す。
-    columns = ", ".join(values)
-    placeholders = ", ".join("?" for _ in values)
     with closing(studylog_plus_get_conn()) as conn, conn:
+        # 比較元の確認と採用の保存は同一トランザクションで行う。
+        conn.execute("BEGIN IMMEDIATE")
+        values["plan_tracking"] = studylog_adopt_plan(form, values, conn)
+        columns = ", ".join(values)
+        placeholders = ", ".join("?" for _ in values)
         cursor = conn.execute(
             f"INSERT INTO logs ({columns}) VALUES ({placeholders})", tuple(values.values())
         )
@@ -1748,6 +1978,8 @@ def studylog_plus_index(form_data=None, error=None):
     logs = studylog_plus_get_logs(where_sql, params) if where_sql else all_logs
     analyses = studylog_analyze_logs(all_logs)
     plans = {log["id"]: studylog_build_next_plan(log, analyses[log["id"]]) for log in all_logs}
+    effects = {log["id"]: studylog_evaluate_plan(log) for log in all_logs}
+    effect_summary = studylog_summarize_effects(logs, effects)
     summary = studylog_plus_get_summary(where_sql, params)
     categories = studylog_plus_get_categories()
     plan_notice = None
@@ -1766,6 +1998,8 @@ def studylog_plus_index(form_data=None, error=None):
                 plan = plans[int(source)]
                 form_data.update(category=plan["category"], task=plan["task"], goal=plan["goal"],
                                  planned_minutes=plan["minutes"], strategy=plan["strategy"])
+                source_log = next(log for log in all_logs if log["id"] == int(source))
+                form_data["plan_token"] = studylog_plan_token(source_log, plan, analyses[int(source)])
                 plan_notice = f"ログ #{int(source)} の補正計画を入力欄へ引き継ぎました。まだ保存していません。"
 
     html = render_template_string(
@@ -1773,6 +2007,8 @@ def studylog_plus_index(form_data=None, error=None):
         logs=logs,
         analyses=analyses,
         plans=plans,
+        effects=effects,
+        effect_summary=effect_summary,
         summary=summary,
         categories=categories,
         filters=filters,
