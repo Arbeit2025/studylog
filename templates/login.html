@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="ja">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ロック解除 · studylog</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='login.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='theme.css') }}">
+    <script src="{{ url_for('static', filename='theme.js') }}"></script>
+    <script src="{{ url_for('static', filename='login.js') }}" defer></script>
+</head>
+<body>
+<main>
+    <div class="login-theme">{% include 'theme_control.html' %}</div>
+    <h1>studylog</h1>
+    <p>4桁の暗証番号を入力して、学習の記録を開きます。</p>
+    <label class="admin-choice" for="admin-login">
+        <input id="admin-login" type="checkbox" data-admin-login-url="{{ url_for('studylog_admin_login') }}">
+        <span>管理者としてログイン</span>
+    </label>
+    <noscript><p><a href="{{ url_for('studylog_admin_login') }}">管理者パスコードの入力へ</a></p></noscript>
+    {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+    {% if configured %}
+    <form method="post" action="{{ url_for('studylog_login') }}">
+        <input type="hidden" name="csrf_token" value="{{ studylog_csrf_token() }}">
+        <label for="pin">暗証番号（数字4桁）</label>
+        <input id="pin" name="pin" type="password" inputmode="numeric" pattern="[0-9]{4}"
+            minlength="4" maxlength="4" autocomplete="current-password" required autofocus
+            aria-describedby="pin-help" {% if error %}aria-invalid="true"{% endif %}>
+        <p id="pin-help">半角の数字4桁で入力してください。</p>
+        <button type="submit">ロック解除</button>
+    </form>
+    {% endif %}
+</main>
+</body>
+</html>

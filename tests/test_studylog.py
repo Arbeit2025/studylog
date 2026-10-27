@@ -5,12 +5,20 @@ import secrets
 import shutil
 import sqlite3
 import tempfile
+import sys
 import unittest
 from html.parser import HTMLParser
 from pathlib import Path
 
 
 SOURCE = Path(__file__).resolve().parents[1] / "soapp.py"
+
+
+def copy_runtime(destination):
+    for filename in ("soapp.py", "studylog_db.py", "studylog_analysis.py", "studylog_forms.py"):
+        shutil.copy2(SOURCE.parent / filename, destination / filename)
+    for directory in ("templates", "static"):
+        shutil.copytree(SOURCE.parent / directory, destination / directory)
 
 
 class FormParser(HTMLParser):
@@ -60,7 +68,7 @@ class StudylogFixture(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory(prefix="studylog-test-")
         self.root = Path(self.directory.name)
-        shutil.copy2(SOURCE, self.root / "soapp.py")
+        copy_runtime(self.root)
         self.load_app()
 
     def tearDown(self):
@@ -69,7 +77,11 @@ class StudylogFixture(unittest.TestCase):
     def load_app(self):
         spec = importlib.util.spec_from_file_location("isolated_studylog", self.root / "soapp.py")
         self.module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(self.module)
+        sys.path.insert(0, str(self.root))
+        try:
+            spec.loader.exec_module(self.module)
+        finally:
+            sys.path.remove(str(self.root))
         self.module.app.config.update(TESTING=True, SECRET_KEY=secrets.token_hex(32),
                                       STUDYLOG_PIN="4826", SESSION_COOKIE_SECURE=False)
         self.client = self.module.app.test_client()

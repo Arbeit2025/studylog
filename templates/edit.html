@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ja">
+<head>
+    <meta charset="utf-8">
+    <title>studylog 編集</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='theme.css') }}">
+    <script src="{{ url_for('static', filename='theme.js') }}"></script>
+</head>
+<body>
+<div class="wrap">
+    <div class="card">
+        <div class="page-header">
+            <h1 class="no-margin">ログを編集</h1>
+            <div class="header-actions">
+                {% include 'theme_control.html' %}
+                {% include 'admin_control.html' %}
+                <button type="submit" form="studylog-lock" class="auto-width">ロック</button>
+            </div>
+        </div>
+
+{% include 'log_form.html' %}
+
+        <a class="back" href="/">← 一覧へ戻る</a>
+    </div>
+</div>
+{% include 'lock.html' %}
+</body>
+</html>

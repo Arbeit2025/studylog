@@ -1,0 +1,120 @@
+{% macro field_value(name) -%}
+    {{ form_data.get(name) if form_data.get(name) is not none else '' }}
+{%- endmacro %}
+{% macro rating(name, label) -%}
+    <div>
+        <label for="{{ name }}">{{ label }}（1〜5）</label>
+        <select id="{{ name }}" name="{{ name }}">
+            <option value="">未入力</option>
+            {% for i in [1,2,3,4,5] %}
+                <option value="{{ i }}" {% if form_data.get(name)|string == i|string %}selected{% endif %}>{{ i }}</option>
+            {% endfor %}
+        </select>
+    </div>
+{%- endmacro %}
+{% if error %}
+    <p role="alert" class="notice notice-error">{{ error }}</p>
+{% endif %}
+{% if plan_notice %}
+    <p role="status" class="notice notice-plan">{{ plan_notice }} 内容を調整し、「学習前を保存」で新しい記録として保存できます。</p>
+{% endif %}
+<p class="muted">学習前だけでも保存できます。一覧の「学習後を記録」から、同じログに結果を追記できます。</p>
+{% if is_edit %}
+    <p>状態：<strong>{{ '学習中' if form_data.get('status') == 'in_progress' else '学習完了' }}</strong></p>
+{% endif %}
+<form method="post" action="{{ form_action }}">
+    <input type="hidden" name="csrf_token" value="{{ studylog_csrf_token() }}">
+    {% if not is_edit and form_data.get('plan_token') %}
+        <input type="hidden" name="plan_token" value="{{ field_value('plan_token') }}">
+        <p class="muted">この計画を保存すると、採用時の提案・比較元と学習後の結果を継続評価できます。時間・目標・方法は編集できます。</p>
+    {% elif is_edit and form_data.get('plan_tracking') %}
+        <p class="muted">補正計画から作成した記録です。採用時の提案と比較基準は保持されます。</p>
+    {% endif %}
+    <div class="grid-2">
+        <div>
+            <label for="study_date">学習日</label>
+            <input id="study_date" type="date" name="study_date" value="{{ field_value('study_date') }}" required>
+        </div>
+        <div>
+            <label for="category">カテゴリ</label>
+            <input id="category" type="text" name="category" value="{{ field_value('category') }}" placeholder="例: 卒論">
+        </div>
+    </div>
+    <div class="mt-14">
+        <label for="task">学習内容</label>
+        <textarea id="task" name="task" placeholder="例: 第2章を読み、要点をまとめる">{{ field_value('task') }}</textarea>
+    </div>
+
+    <div class="section">
+        <h3>学習前</h3>
+        <label for="goal">今日の目標</label>
+        <textarea id="goal" name="goal">{{ field_value('goal') }}</textarea>
+        <div class="mt-14 grid-2">
+            <div>
+                <label for="planned_minutes">予定学習時間（分）</label>
+                <input id="planned_minutes" type="number" name="planned_minutes" min="1" step="1" value="{{ field_value('planned_minutes') }}">
+            </div>
+            <div>
+                <label for="strategy">学習方法・作戦</label>
+                <input id="strategy" type="text" name="strategy" value="{{ field_value('strategy') }}" placeholder="例: 25分ずつ区切って取り組む">
+            </div>
+        </div>
+        <div class="mt-14 grid-3">
+            {{ rating('before_concentration', '学習前の集中できそう度') }}
+            {{ rating('before_understanding', '学習前の理解度') }}
+            {{ rating('before_confidence', '学習前の自信度') }}
+        </div>
+        <div class="mt-14">
+            <label for="before_test_score">学習前の確認テスト（0〜100点換算・任意）</label>
+            <input id="before_test_score" type="number" name="before_test_score" min="0" max="100" step="any" value="{{ field_value('before_test_score') }}">
+        </div>
+    </div>
+
+    <div class="section">
+        <h3>学習後</h3>
+        <p class="muted">学習が終わったら入力してください。未入力の評価は空欄のまま保存されます。</p>
+        <label for="minutes">実際の学習時間（分・学習完了時は必須）</label>
+        <input id="minutes" type="number" name="minutes" min="1" step="1" value="{{ field_value('minutes') }}">
+        <div class="mt-14 grid-3">
+            {{ rating('concentration', '学習後の集中度') }}
+            {{ rating('understanding', '学習後の理解度') }}
+            {{ rating('confidence', '学習後の自信度') }}
+        </div>
+        <div class="mt-14">
+            <label for="after_test_score">学習後の確認テスト（0〜100点換算・任意）</label>
+            <input id="after_test_score" type="number" name="after_test_score" min="0" max="100" step="any" value="{{ field_value('after_test_score') }}">
+        </div>
+        <div class="mt-14 grid-2">
+            <div>
+                <label for="success_reason">うまくいった理由</label>
+                <textarea id="success_reason" name="success_reason">{{ field_value('success_reason') }}</textarea>
+            </div>
+            <div>
+                <label for="fail_reason">うまくいかなかった理由</label>
+                <textarea id="fail_reason" name="fail_reason">{{ field_value('fail_reason') }}</textarea>
+            </div>
+        </div>
+        <div class="mt-14">
+            <label for="next_action">次回どうするか</label>
+            <textarea id="next_action" name="next_action">{{ field_value('next_action') }}</textarea>
+        </div>
+        <div class="mt-14">
+            <label for="stumble_reason">つまずき理由</label>
+            <select id="stumble_reason" name="stumble_reason">
+                {% for item in stumble_options %}
+                    <option value="{{ item }}" {% if form_data.get('stumble_reason') == item %}selected{% endif %}>{{ item or '選択なし' }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="mt-14">
+            <label for="memo">メモ</label>
+            <textarea id="memo" name="memo">{{ field_value('memo') }}</textarea>
+        </div>
+    </div>
+    <div class="mt-16 grid-2">
+        {% if not is_edit or form_data.get('status') == 'in_progress' %}
+            <button type="submit" name="save_stage" value="before">{{ '途中保存' if is_edit else '学習前を保存' }}</button>
+        {% endif %}
+        <button type="submit" name="save_stage" value="after">{{ '更新' if is_edit and form_data.get('status') == 'completed' else '学習後まで保存' }}</button>
+    </div>
+</form>
