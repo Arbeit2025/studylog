@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="ja">
+<head>
+    <meta charset="utf-8">
+    <title>studylog</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='theme.css') }}">
+    <script src="{{ url_for('static', filename='theme.js') }}"></script>
+</head>
+<body>
+<div class="wrap">
+    <div class="page-header">
+        <h1 class="no-margin">studylog</h1>
+        <div class="header-actions">
+            {% include 'theme_control.html' %}
+            {% include 'admin_control.html' %}
+            <button type="submit" form="studylog-lock" class="auto-width">ロック</button>
+        </div>
+    </div>
+
+    <div class="card" id="studylog-add">
+        <h2>学習ログを追加</h2>
+{% include 'log_form.html' %}
+    </div>
+
+    <div class="card">
+        <h2>しぼりこみ</h2>
+        <form method="get" action="/">
+            <div class="grid-4">
+                <div>
+                    <label>表示範囲</label>
+                    <select name="range">
+                        <option value="all" {% if filters["range"] == "all" %}selected{% endif %}>全期間</option>
+                        <option value="today" {% if filters["range"] == "today" %}selected{% endif %}>今日</option>
+                        <option value="week" {% if filters["range"] == "week" %}selected{% endif %}>今週</option>
+                        <option value="month" {% if filters["range"] == "month" %}selected{% endif %}>今月</option>
+                        <option value="custom" {% if filters["range"] == "custom" %}selected{% endif %}>カスタム</option>
+                    </select>
+                </div>
+                <div>
+                    <label>開始日</label>
+                    <input type="date" name="start_date" value="{{ filters['start_date'] }}">
+                </div>
+                <div>
+                    <label>終了日</label>
+                    <input type="date" name="end_date" value="{{ filters['end_date'] }}">
+                </div>
+                <div>
+                    <label>カテゴリ</label>
+                    <select name="category">
+                        <option value="">すべて</option>
+                        {% for c in categories %}
+                            <option value="{{ c }}" {% if filters["category"] == c %}selected{% endif %}>{{ c }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+            <div class="mt-14 inline">
+                <button type="submit">しぼりこむ</button>
+                <a href="/" class="btn-link">リセット</a>
+            </div>
+        </form>
+    </div>
+
+    <div class="card">
+        <h2>集計</h2>
+        <p class="muted">完了 {{ summary["completed_count"] }}件 / 学習中 {{ summary["in_progress_count"] }}件。時間・平均は学習完了の記録を集計します。</p>
+        <div class="summary">
+            <div class="summary-box">
+                <div class="summary-label">件数</div>
+                <div class="summary-value">{{ summary["count"] }}</div>
+            </div>
+            <div class="summary-box">
+                <div class="summary-label">合計学習時間</div>
+                <div class="summary-value">{{ summary["total_minutes"] }}分</div>
+            </div>
+            <div class="summary-box">
+                <div class="summary-label">平均集中度</div>
+                <div class="summary-value">{{ summary["avg_concentration"] }}</div>
+            </div>
+            <div class="summary-box">
+                <div class="summary-label">平均理解度</div>
+                <div class="summary-value">{{ summary["avg_understanding"] }}</div>
+            </div>
+        </div>
+    </div>
+
+
+    <div class="card">
+        <h2>ログ一覧</h2>
+
+        {% if logs %}
+            {% for log in logs %}
+                <div class="log">
+                    <div>
+                        <span class="pill">{{ log["study_date"] }}</span>
+                        <span class="pill">{{ log["category"] or "カテゴリ未設定" }}</span>
+                        <span class="pill">{{ '学習中' if log['status'] == 'in_progress' else '学習完了' }}</span>
+                        {% if log['status'] == 'completed' %}
+                            <span class="pill">{{ log["minutes"] }}分</span>
+                            <span class="pill">集中 {{ log["concentration"] if log["concentration"] is not none else '未記録' }}</span>
+                            <span class="pill">理解 {{ log["understanding"] if log["understanding"] is not none else '未記録' }}</span>
+                            <span class="pill">自信 {{ log["confidence"] if log["confidence"] is not none else '未記録' }}</span>
+                        {% endif %}
+                        {% if log["stumble_reason"] %}
+                            <span class="pill">つまずき: {{ log["stumble_reason"] }}</span>
+                        {% endif %}
+                    </div>
+
+                    <div class="section">
+                        <strong>学習内容</strong>
+                        <div class="muted">{{ log["task"] or "未記録" }}</div>
+                    </div>
+
+                    <div class="section">
+                        <strong>学習前の目標</strong>
+                        <div class="muted">{{ log["goal"] or "なし" }}</div>
+                        <div class="muted">予定時間: {{ (log["planned_minutes"]|string + '分') if log["planned_minutes"] is not none else '未記録' }}</div>
+                        <div class="muted">学習方法: {{ log["strategy"] or "未記録" }}</div>
+                    </div>
+
+
+                    <div class="section">
+                        <strong>学習前 → 学習後</strong>
+                        <div class="muted">集中できそう度 → 集中度: {{ log['before_concentration'] if log['before_concentration'] is not none else '未記録' }} → {{ log['concentration'] if log['status'] == 'completed' and log['concentration'] is not none else '未記録' }}</div>
+                        {% for before, after, label, unit in [
+                            ('before_understanding', 'understanding', '理解度', ''),
+                            ('before_confidence', 'confidence', '自信度', ''),
+                            ('before_test_score', 'after_test_score', '確認テスト', '点')
+                        ] %}
+                            <div class="muted">{{ label }}: {{ log[before] if log[before] is not none else '未記録' }} → {{ log[after] if log['status'] == 'completed' and log[after] is not none else '未記録' }}{% if log['status'] == 'completed' and studylog_number(log, before) is not none and studylog_number(log, after) is not none %}（変化 {{ '%+g'|format(studylog_number(log, after) - studylog_number(log, before)) }}{{ unit }}）{% endif %}</div>
+                        {% endfor %}
+                        {% if log['status'] == 'completed' and studylog_number(log, 'planned_minutes') is not none and studylog_number(log, 'minutes') is not none %}
+                            <div class="muted">学習時間: {{ log['planned_minutes'] }}分 → {{ log['minutes'] }}分（予定との差 {{ '%+d'|format(studylog_number(log, 'minutes') - studylog_number(log, 'planned_minutes')) }}分）</div>
+                        {% endif %}
+                    </div>
+
+                    <div class="section">
+                        <strong>うまくいった理由</strong>
+                        <div class="muted">{{ log["success_reason"] or "なし" }}</div>
+                    </div>
+
+                    <div class="section">
+                        <strong>うまくいかなかった理由</strong>
+                        <div class="muted">{{ log["fail_reason"] or "なし" }}</div>
+                    </div>
+
+                    <div class="section">
+                        <strong>次回どうするか</strong>
+                        <div class="muted">{{ log["next_action"] or "なし" }}</div>
+                    </div>
+
+                    <div class="section">
+                        <strong>メモ</strong>
+                        <div class="muted">{{ log["memo"] or "なし" }}</div>
+                    </div>
+
+                    <div class="actions">
+                        <a class="btn-link" href="/edit/{{ log['id'] }}">{{ '学習後を記録' if log['status'] == 'in_progress' else '編集' }}</a>
+                        <form method="post" action="/delete/{{ log['id'] }}" data-confirm-delete>
+                            <input type="hidden" name="csrf_token" value="{{ studylog_csrf_token() }}">
+                            <button type="submit" class="danger">削除</button>
+                        </form>
+                    </div>
+                </div>
+            {% endfor %}
+        {% else %}
+            <div class="empty">まだログがありません。</div>
+        {% endif %}
+    </div>
+</div>
+{% include 'lock.html' %}
+</body>
+</html>

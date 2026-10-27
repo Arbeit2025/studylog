@@ -1,0 +1,4 @@
+<form id="studylog-lock" method="post" action="{{ url_for('studylog_logout') }}" hidden>
+    <input type="hidden" name="csrf_token" value="{{ studylog_csrf_token() }}">
+</form>
+<script src="{{ url_for('static', filename='session.js') }}" defer></script>

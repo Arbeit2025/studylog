@@ -3,5 +3,11 @@ __pycache__/
 *.db
 *.db-shm
 *.db-wal
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+*.db-journal
+backups/
+.venv/
 .env
 .env.*
