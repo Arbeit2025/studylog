@@ -12,3 +12,7 @@
         input:focus{outline:2px solid var(--focus);outline-offset:2px;}
         button{margin-top:18px;border:0;background:var(--button-bg);color:var(--button-text);font-weight:700;cursor:pointer;}
         .error{color:var(--danger-text);background:var(--error-bg);border-radius:10px;padding:12px;}
+        .admin-choice{display:flex;align-items:center;gap:10px;min-height:48px;
+            margin:18px 0;padding:10px 12px;border:1px solid var(--border);border-radius:12px;cursor:pointer;}
+        .admin-choice input{width:22px;height:22px;margin:0;padding:0;flex-shrink:0;accent-color:var(--focus);}
+        .login-back{display:inline-flex;align-items:center;min-height:44px;margin-top:18px;font-size:14px;}
