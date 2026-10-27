@@ -179,24 +179,28 @@ def import_legacy(destination, source, table="study_logs"):
     return {"imported": imported, "skipped": skipped, "backups": backups}
 
 
-def try_pin(path, candidate, pin, now):
+def try_pin(path, candidate, pin, now, *, admin=False):
+    # Fixed names only; regular and admin failures must not reset each other.
+    table = "studylog_admin_auth_attempts" if admin else "studylog_auth_attempts"
     with closing(connect(path)) as conn, conn:
         conn.execute("BEGIN IMMEDIATE")
-        conn.execute("""CREATE TABLE IF NOT EXISTS studylog_auth_attempts (
+        conn.execute(f"""CREATE TABLE IF NOT EXISTS {table} (
             id INTEGER PRIMARY KEY CHECK (id = 1), failures INTEGER NOT NULL,
             last_failure REAL NOT NULL, blocked_until REAL NOT NULL
         )""")
-        conn.execute("INSERT OR IGNORE INTO studylog_auth_attempts VALUES (1, 0, 0, 0)")
+        conn.execute(f"INSERT OR IGNORE INTO {table} VALUES (1, 0, 0, 0)")
         failures, last_failure, blocked_until = conn.execute(
-            "SELECT failures, last_failure, blocked_until FROM studylog_auth_attempts WHERE id=1").fetchone()
+            f"SELECT failures, last_failure, blocked_until FROM {table} WHERE id=1").fetchone()
         if blocked_until > now:
             return False, math.ceil(blocked_until - now)
         if blocked_until or now - last_failure >= 300:
             failures = 0
-        valid = isinstance(candidate, str) and len(candidate) == 4 and candidate.isascii() and candidate.isdigit()
+        valid = (isinstance(candidate, str) and candidate.isascii()
+                 and len(candidate) == (8 if admin else 4)
+                 and (candidate.isalnum() if admin else candidate.isdigit()))
         accepted = valid and hmac.compare_digest(candidate, pin)
         failures = 0 if accepted else failures + 1
         blocked_until = now + 30 if failures >= 5 else 0
-        conn.execute("UPDATE studylog_auth_attempts SET failures=?, last_failure=?, blocked_until=? WHERE id=1",
+        conn.execute(f"UPDATE {table} SET failures=?, last_failure=?, blocked_until=? WHERE id=1",
                      (failures, now, blocked_until))
     return accepted, 30 if blocked_until else 0

@@ -9,7 +9,7 @@ import sqlite3
 import tempfile
 import unittest
 
-from test_studylog import StudylogFixture
+from test_studylog import FormParser, StudylogFixture
 import studylog_db as database
 
 
@@ -197,6 +197,10 @@ class Phase0HttpTest(StudylogFixture):
         self.client.post("/add", data=self.completed())
         before = self.rows()
         self.assertEqual(self.module.app.test_client().get("/backup").status_code, 303)
+        self.assertEqual(self.client.get("/backup").status_code, 403)
+        self.module.app.config["STUDYLOG_ADMIN_PASSCODE"] = "R7t2Qa9z"
+        token = FormParser(self.client.get("/admin/login").get_data(as_text=True)).fields["csrf_token"]
+        self.assertEqual(self.client.post("/admin/login", data={"passcode": "R7t2Qa9z", "csrf_token": token}).status_code, 303)
         response = self.client.get("/backup")
         self.assertEqual(response.status_code, 200)
         self.assertIn("attachment", response.headers["Content-Disposition"])
