@@ -30,7 +30,7 @@ class PublicBoundaryTest(unittest.TestCase):
     def test_readme_has_public_private_boundary(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn("公開版に含まれないもの", readme)
-        self.assertNotIn("0.90 - 0.15", readme)
+        self.assertNotIn("STUDYLOG_MIN_HISTORY", readme)
         self.assertNotIn("STUDYLOG_HISTORY_LIMIT", (ROOT / "studylog_analysis.py").read_text(encoding="utf-8"))
 
 
