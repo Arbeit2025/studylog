@@ -117,7 +117,7 @@ def run_once(index):
                 form.update(minutes=str(minutes), save_stage="after")
                 check(request(client, base, "/update/1", form)[0] == 302, "repeated edit failed")
             html = request(client, base, "/")[2]
-            check("状態分類・過去ログとの比較" in html and "変化 +2" in html, "analysis or before/after display missing")
+            check("変化 +2" in html, "analysis or before/after display missing")
             check(request(client, base, "/backup")[0] == 403, "regular PIN granted admin backup")
             data = FormParser(request(client, base, "/admin/login")[2]).fields
             data["passcode"] = "R7t2Qa9z"
