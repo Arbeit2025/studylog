@@ -59,12 +59,12 @@ def studylog_build_next_plan(log, analysis):
         "enabled": False,
         "version": "public-basic",
         "reason": "計画の自動補正は公開サンプルに含まれません。",
-        "category": log.get("category") or "",
-        "task": log.get("task") or "",
+        "category": dict(log).get("category") or "",
+        "task": dict(log).get("task") or "",
         "minutes": None,
         "base_minutes": None,
-        "goal": log.get("goal") or "",
-        "strategy": log.get("strategy") or "",
+        "goal": dict(log).get("goal") or "",
+        "strategy": dict(log).get("strategy") or "",
     }
 
 
