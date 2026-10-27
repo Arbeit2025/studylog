@@ -86,29 +86,6 @@
         </div>
     </div>
 
-    <div class="card" id="plan-effects">
-        <h2>補正効果の継続評価</h2>
-        <p class="muted">表示中のログを集計：補正計画から保存 {{ effect_summary['total'] }}件 / 比較可能 {{ effect_summary['evaluated'] }}件 / 学習後待ち {{ effect_summary['waiting'] }}件 / 比較保留 {{ effect_summary['excluded'] }}件。</p>
-        <p class="muted">計画を引き継いで保存すると、採用時の比較元からの変化を追えます。カテゴリごとに集計し、未入力は比較数に含めません。補正が変化の原因だと確定する評価ではありません。確認テストは同じ内容・難しさかも振り返ってください。</p>
-        {% for group in effect_summary['groups'] %}
-            <details open class="mt-14">
-                <summary>{{ group['category'] or 'カテゴリ未設定' }}：比較可能 {{ group['evaluated'] }}件</summary>
-                <div class="table-scroll">
-                    <table class="comparison-table table-340">
-                        <caption>採用時の比較元との差の平均</caption>
-                        <thead><tr><th scope="col">項目</th><th scope="col">平均の差</th><th scope="col">比較数</th></tr></thead>
-                        <tbody>{% for metric in group['metrics'] %}
-                            <tr><th scope="row">{{ metric['label'] }}</th><td>{{ ('%+.2f'|format(metric['mean'])) + metric['unit'] if metric['mean'] is not none else '比較なし' }}</td><td>{{ metric['count'] }}件</td></tr>
-                        {% endfor %}</tbody>
-                    </table>
-                </div>
-                <p class="muted">直近5件までの推移（学習日・登録順、新しい順）：</p>
-                <ul>{% for item in group['recent'] %}<li><a href="/edit/{{ item['id'] }}">{{ item['study_date'] }} #{{ item['id'] }}</a>：{{ item['label'] }}</li>{% endfor %}</ul>
-            </details>
-        {% else %}
-            <p class="muted">まだ比較できる補正計画の結果がありません。各ログの「この計画で次の学習を準備」から始められます。</p>
-        {% endfor %}
-    </div>
 
     <div class="card">
         <h2>ログ一覧</h2>
@@ -143,91 +120,6 @@
                         <div class="muted">学習方法: {{ log["strategy"] or "未記録" }}</div>
                     </div>
 
-                    {% set analysis = analyses[log['id']] %}
-                    <div class="section analysis" data-log-id="{{ log['id'] }}" data-state="{{ analysis['state'] }}">
-                        <h3>状態分類・過去ログとの比較</h3>
-                        <span class="pill">{{ analysis['label'] }}</span>
-                        <div class="muted">{{ analysis['reason'] }}</div>
-                        <div class="muted">支援の方向: {{ analysis['support_label'] }}</div>
-                        <div>{{ analysis['action'] }}</div>
-                        <details class="mt-10">
-                            <summary>比較の内訳（同じカテゴリの過去{{ analysis['history_count'] }}件）</summary>
-                            <p class="muted">{{ analysis['evidence'] }}。入力記録から見た暫定的な傾向です。</p>
-                            <div class="table-scroll">
-                                <table class="comparison-table table-390">
-                                    <caption>学習後の値と直前5件以内の平均</caption>
-                                    <thead><tr><th scope="col">項目</th><th scope="col">今回</th><th scope="col">過去平均</th><th scope="col">差</th><th scope="col">比較数</th></tr></thead>
-                                    <tbody>
-                                    {% for metric in analysis['metrics'] %}
-                                        <tr>
-                                            <th scope="row">{{ metric['label'] }}</th>
-                                            <td>{{ ('%.2f'|format(metric['current'])) + metric['unit'] if metric['current'] is not none else '未記録' }}</td>
-                                            <td>{{ ('%.2f'|format(metric['baseline'])) + metric['unit'] if metric['baseline'] is not none else '比較なし' }}</td>
-                                            <td>{{ ('%+.2f'|format(metric['delta'])) + metric['unit'] if metric['delta'] is not none else '—' }}</td>
-                                            <td>{{ metric['count'] }}件</td>
-                                        </tr>
-                                    {% endfor %}
-                                    </tbody>
-                                </table>
-                            </div>
-                            {% if analysis['history_ids'] %}
-                                <div class="muted">比較したログ（新しい順）:
-                                    {% for history_id in analysis['history_ids'] %}<a href="/edit/{{ history_id }}">#{{ history_id }}</a>{% if not loop.last %} / {% endif %}{% endfor %}
-                                </div>
-                            {% endif %}
-                            <p class="muted">同じカテゴリの完了ログだけを、学習日と同日の登録順で比較します。表示の絞り込みは基準に影響しません。学習時間の長短だけでは良否を判定しません。</p>
-                            <strong>個人別の判定基準</strong>
-                            <p class="muted">過去との差は記録数に応じて弱め、3件以上で傾向を判定します。テストと自信度の比較は参考換算です。テストの内容・難しさの違いも振り返ってください。</p>
-                        </details>
-                    </div>
-
-                    {% set plan = plans[log['id']] %}
-                    <div class="section next-plan" data-log-id="{{ log['id'] }}" data-plan-version="{{ plan['version'] }}">
-                        <h3>次回計画の自動補正</h3>
-                        {% if plan['enabled'] %}
-                            <div><strong>次回の予定時間: {{ plan['minutes'] }}分</strong>（基準 {{ plan['base_minutes'] }}分）</div>
-                            <div class="muted">目標: {{ plan['goal'] }}</div>
-                            <div class="muted">学習方法: {{ plan['strategy'] }}</div>
-                            <details class="mt-10">
-                                <summary>補正の理由</summary>
-                                <p class="muted">{{ plan['reason'] }}</p>
-                                <p class="muted">元の記録は保持し、表示時に再計算します。次の学習へ引き継いで保存した内容は、新しいログに残ります。</p>
-                            </details>
-                            <a class="mt-10 btn-link" href="/?plan_from={{ log['id'] }}#studylog-add">この計画で次の学習を準備</a>
-                        {% else %}
-                            <p class="muted">{{ plan['reason'] }}</p>
-                        {% endif %}
-                    </div>
-
-                    {% set effect = effects[log['id']] %}
-                    {% if effect['tracked'] %}
-                    <div class="section plan-effect" data-log-id="{{ log['id'] }}" data-effect-state="{{ effect['state'] }}">
-                        <h3>この補正計画の評価</h3>
-                        <strong>{{ effect['label'] }}</strong>
-                        <p class="muted">{{ effect['reason'] }}</p>
-                        {% if effect.get('tracking') %}
-                            {% set tracking = effect['tracking'] %}
-                            <details>
-                                <summary>採用時の計画と比較元</summary>
-                                <p class="muted">元ログ #{{ tracking['source_id'] }}（{{ tracking['source_date'] }}）。採用日時 {{ tracking['adopted_at'] }}。提案方式 {{ tracking['plan']['version'] }}。</p>
-                                <p class="muted">提案：{{ tracking['plan']['minutes'] }}分（基準 {{ tracking['plan']['base_minutes'] }}分） / 目標：{{ tracking['plan']['goal'] }} / 方法：{{ tracking['plan']['strategy'] }}</p>
-                                <p class="muted">保存した計画：{{ tracking['adopted_plan']['planned_minutes'] if tracking['adopted_plan']['planned_minutes'] is not none else '未入力' }}分 / 目標：{{ tracking['adopted_plan']['goal'] }} / 方法：{{ tracking['adopted_plan']['strategy'] }}</p>
-                                <p class="muted">{{ effect['adoption_label'] }}。比較元は採用時の値を保持し、元ログの編集・削除では変わりません。{{ tracking['plan']['reason'] }}</p>
-                            </details>
-                        {% endif %}
-                        {% if effect['metrics'] %}
-                            <div class="table-scroll">
-                                <table class="comparison-table table-420">
-                                    <caption>採用時の比較元と今回の結果</caption>
-                                    <thead><tr><th scope="col">項目</th><th scope="col">比較元</th><th scope="col">今回</th><th scope="col">差</th><th scope="col">今回の学習前後差</th></tr></thead>
-                                    <tbody>{% for metric in effect['metrics'] %}
-                                        <tr><th scope="row">{{ metric['label'] }}</th><td>{{ ('%g'|format(metric['baseline'])) + metric['unit'] if metric['baseline'] is not none else '未記録' }}</td><td>{{ ('%g'|format(metric['current'])) + metric['unit'] if metric['current'] is not none else '未記録' }}</td><td>{{ ('%+g'|format(metric['delta'])) + metric['unit'] if metric['delta'] is not none else '比較なし' }}</td><td>{{ ('%+g'|format(metric['gain'])) + metric['unit'] if metric['gain'] is not none else '比較なし' }}</td></tr>
-                                    {% endfor %}</tbody>
-                                </table>
-                            </div>
-                        {% endif %}
-                    </div>
-                    {% endif %}
 
                     <div class="section">
                         <strong>学習前 → 学習後</strong>
