@@ -3,6 +3,9 @@
 Studylog は、学習前の計画と学習後の記録を扱う学習ログアプリです。
 この公開リポジトリには、記録・一覧・編集・集計・認証などの基本機能だけを含めています。
 
+- サービス: https://studylog1.onrender.com/
+- 開発者向け情報（起動・テスト・開発体制）: [DEVELOPMENT.md](DEVELOPMENT.md)
+
 ## 公開版の機能
 - 学習内容、目標、予定時間、学習後の振り返りの記録
 - 日付・カテゴリによる絞り込み、学習時間などの基本集計
@@ -16,28 +19,3 @@ Studylog は、学習前の計画と学習後の記録を扱う学習ログア�
 研究開発と本番アプリの実装は、アクセス制限付きの別リポジトリで管理します。この公開リポジトリは本番デプロイ元ではありません。公開版をチェックアウトして実行したときに、研究開発版と同じ機能が使えるわけではありません。
 
 過去のコミット履歴や外部の保存コピーを、この変更で消去できるわけではありません。特許の新規性を保証するものではありません。
-
-## 起動（ローカル）
-Python 3.12 / 3.13 で動作する基本機能を対象とします。
-
-```bash
-pip install -r requirements.txt
-# STUDYLOG_PIN / STUDYLOG_SECRET_KEY 等を安全な環境変数として設定
-gunicorn soapp:app
-```
-
-## テスト
-```bash
-python -m unittest discover -s tests -v
-python tests/http_auth_smoke.py
-node tests/theme_runtime.js
-```
-
-実行環境の構成や必要な環境変数の詳細はコードを参照してください。認証情報や学習データを GitHub にコミットしないでください。
-
-## 開発体制
-公開側は公開可能な機能に限り、変更は専用ブランチからの Pull Request と所有者レビューで統合します。非公開の研究開発コード・未出願の技術情報を公開側へ同期しないでください。
-
-- 公開側: https://github.com/Arbeit2025/studylog
-- サービス: https://studylog1.onrender.com/
-- 共同開発ルール: [docs/AI_COLLABORATION.md](docs/AI_COLLABORATION.md)
